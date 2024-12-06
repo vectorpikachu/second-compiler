@@ -1,0 +1,253 @@
+use crate::ast::*;
+
+/* 对于FuncDef 和 VarDecl, 有二义性:
+ * First, the parser could execute the production at
+    ...\src\sysy.lalrpop:220:3: 220:21, which would consume
+    the top 1 token(s) from the stack and produce a `BType`. This might then yield a parse tree like
+      "int"   ╷ VarDef ";"
+      ├─BType─┘          │
+      └─VarDecl──────────┘
+   Alternatively, the parser could execute the production at
+    ...\src\sysy.lalrpop:224:3: 224:24, which would consume
+    the top 1 token(s) from the stack and produce a `FuncType`. This might then yield a parse tree like
+      "int"      ╷ Ident "(" ")" Block
+      ├─FuncType─┘                   │
+      └─FuncDef──────────────────────┘
+    一个好的解决方法就是:
+    再抽出来一个可以分别两者的非终结符: FuncHead ::= <ty: FuncType> <ident: Ident> "("
+ */
+
+grammar;
+
+match {
+  r"\s*" => {}, // 忽略空白字符
+  r"//[^\n\r]*[\n\r]*" => {}, // 忽略单行注释
+  r"/\*[^*]*\*+(?:[^/*][^*]*\*+)*/" => {}, // 忽略多行注释
+  _
+}
+
+pub CompUnit: CompUnit = <entries: (GlobalEntry)*> => CompUnit {
+  entries
+};
+
+GlobalEntry: GlobalEntry = {
+  <entry: Decl> => GlobalEntry::Decl(entry),
+  <entry: FuncDef> => GlobalEntry::FuncDef(entry),
+};
+
+Decl: Decl = {
+  <const_decl: ConstDecl> => Decl::Const(const_decl),
+  <var_decl: VarDecl> => Decl::Var(var_decl),
+};
+
+ConstDecl: ConstDecl = {
+  "const" <ty: BType> <const_def: ConstDef> <mut const_def_tail: ("," <ConstDef>)*> ";" => {
+    const_def_tail.insert(0, const_def);
+    ConstDecl { ty, defs: const_def_tail }
+  }
+};
+
+ConstDef: ConstDef = {
+    <ident: Ident> <index: ("[" <ConstExp> "]")*> "=" <const_init_val: ConstInitVal> =>
+      ConstDef { ident, array_index: index, init_val: const_init_val }
+}
+
+ConstInitVal: ConstInitVal = {
+  <const_exp: ConstExp> => ConstInitVal::Exp(const_exp),
+  "{" "}" => ConstInitVal::Array(Vec::new()),
+  "{" <head: ConstInitVal> <mut tail: ("," <ConstInitVal>)*> "}" => {
+    tail.insert(0, head);
+    ConstInitVal::Array(tail)
+  }
+}
+
+VarDecl: VarDecl = {
+  "int" <var_def: VarDef> <mut var_def_tail: ("," <VarDef>)*> ";" => {
+    var_def_tail.insert(0, var_def);
+    VarDecl { ty: BType::Int, defs: var_def_tail }
+  }
+};
+
+VarDef: VarDef = {
+  <ident: Ident> <index: ("[" <ConstExp> "]")*> <var_init_val: ("=" <InitVal>)?> =>
+    VarDef { ident, array_index: index, init_val: var_init_val }
+}
+
+InitVal: InitVal = {
+    <exp: Exp> => InitVal::Exp(exp),
+    "{" "}" => InitVal::Array(Vec::new()),
+    "{" <head: InitVal> <mut tail: ("," <InitVal>)*> "}" => {
+      tail.insert(0, head);
+      InitVal::Array(tail)
+    }
+}
+
+FuncDefHead: (FuncType, String) = {
+  "int" <ident: Ident> "(" => (FuncType::Int, ident),
+  "void" <ident: Ident> "(" => (FuncType::Void, ident),
+}
+
+FuncDef: FuncDef = {
+    <head: FuncDefHead> <params: FuncFParams?> ")" <block: Block> =>
+      FuncDef { ty: head.0, ident: head.1, params, block }
+}
+
+FuncFParams: FuncFParams = {
+  <head: FuncFParam> <mut tail: ("," <FuncFParam>)*> => {
+    tail.insert(0, head);
+    FuncFParams{ params: tail }
+  }
+}
+
+FuncFParam: FuncFParam = {
+    <ty: BType> <ident: Ident> <index: ("[" "]" <("[" <ConstExp> "]")*>)?> => {
+        FuncFParam { ty, ident, array_index: index }
+    }
+}
+
+Block: Block = {
+    "{" <block_items: (BlockItem)*> "}" => Block { items: block_items }
+}
+
+BlockItem: BlockItem = {
+    <stmt: Stmt> => BlockItem::Stmt(stmt),
+    <decl: Decl> => BlockItem::Decl(decl)
+}
+
+Stmt: Stmt = {
+    <cs: ClosedStmt> => <>,
+    <os: OpenStmt> => <>,
+}
+
+ClosedStmt: Stmt = {
+    <lval: LVal> "=" <exp: Exp> ";" => Stmt::Assign(lval, exp),
+    <exp: Exp?> ";" => Stmt::Exp(exp),
+    <block: Block> => Stmt::Block(block),
+    "if" "(" <cond: Exp> ")" <true_stmt: ClosedStmt> "else" <false_stmt: ClosedStmt> => 
+      Stmt::If(cond, Box::new(true_stmt), Some(Box::new(false_stmt))),
+    "while" "(" <cond: Exp> ")" <body: ClosedStmt> => Stmt::While(cond, Box::new(body)),
+    "break" ";" => Stmt::Break,
+    "continue" ";" => Stmt::Continue,
+    "return" <exp: Exp?> ";" => Stmt::Return(exp),
+}
+
+OpenStmt: Stmt = {
+    "if" "(" <cond: Exp> ")" <true_stmt: Stmt> => 
+      Stmt::If(cond, Box::new(true_stmt), None),
+    "if" "(" <cond: Exp> ")" <true_stmt: ClosedStmt> "else" <false_stmt: OpenStmt> => 
+      Stmt::If(cond, Box::new(true_stmt), Some(Box::new(false_stmt))),
+    "while" "(" <cond: Exp> ")" <body: OpenStmt> => 
+      Stmt::While(cond, Box::new(body)),
+}
+
+Exp: Exp = <lor_exp: LOrExp> => Exp { lor_exp };
+
+LVal: LVal = <ident: Ident> <index: ("[" <Exp> "]")*> => LVal { ident, array_index: index };
+
+PrimaryExp: PrimaryExp = {
+    "(" <exp: Exp> ")" => PrimaryExp::Exp(Box::new(exp)),
+    <lval: LVal> => PrimaryExp::LVal(lval),
+    <number: Number> => PrimaryExp::Number(number),
+}
+
+UnaryExp: UnaryExp = {
+    <primary_exp: PrimaryExp> => UnaryExp::Primary(primary_exp),
+    <ident: Ident> "(" <args: FuncRParams?> ")" => UnaryExp::Call(ident, args),
+    <unary_op: UnaryOp> <unary_exp: UnaryExp> => UnaryExp::Unary(unary_op, Box::new(unary_exp)),
+}
+
+UnaryOp: UnaryOp = {
+    "+" => UnaryOp::Pos,
+    "-" => UnaryOp::Neg,
+    "!" => UnaryOp::Not,
+}
+
+FuncRParams: FuncRParams = {
+    <head: Exp> <mut tail: ("," <Exp>)*> => {
+        tail.insert(0, head);
+        FuncRParams { params: tail }
+    }
+}
+
+MulExp: MulExp = {
+    <unary_exp: UnaryExp> => MulExp::Unary(unary_exp),
+    <mul_exp: MulExp> <mul_op: MulOp> <unary_exp: UnaryExp> => 
+      MulExp::Mul(Box::new(mul_exp), mul_op, Box::new(unary_exp)),
+}
+
+MulOp: MulOp = {
+    "*" => MulOp::Mul,
+    "/" => MulOp::Div,
+    "%" => MulOp::Mod,
+}
+
+AddExp: AddExp = {
+    <mul_exp: MulExp> => AddExp::Mul(mul_exp),
+    <add_exp: AddExp> <add_op: AddOp> <mul_exp: MulExp> => 
+      AddExp::Add(Box::new(add_exp), add_op, Box::new(mul_exp)),
+}
+
+AddOp: AddOp = {
+    "+" => AddOp::Add,
+    "-" => AddOp::Sub,
+}
+
+RelExp: RelExp = {
+    <add_exp: AddExp> => RelExp::Add(add_exp),
+    <rel_exp: RelExp> <rel_op: RelOp> <add_exp: AddExp> => 
+      RelExp::Rel(Box::new(rel_exp), rel_op, Box::new(add_exp)),
+}
+
+RelOp: RelOp = {
+    "<" => RelOp::Lt,
+    "<=" => RelOp::Le,
+    ">" => RelOp::Gt,
+    ">=" => RelOp::Ge,
+}
+
+EqExp: EqExp = {
+    <rel_exp: RelExp> => EqExp::Rel(rel_exp),
+    <eq_exp: EqExp> <eq_op: EqOp> <rel_exp: RelExp> => 
+      EqExp::Eq(Box::new(eq_exp), eq_op, Box::new(rel_exp)),
+}
+
+EqOp: EqOp = {
+    "==" => EqOp::Eq,
+    "!=" => EqOp::Ne,
+}
+
+LAndExp: LAndExp = {
+    <eq_exp: EqExp> => LAndExp::Eq(eq_exp),
+    <land_exp: LAndExp> <and_op: AndOp> <eq_exp: EqExp> => 
+      LAndExp::And(Box::new(land_exp), and_op, Box::new(eq_exp)),
+}
+
+AndOp: AndOp = {
+    "&&" => AndOp::And,
+}
+
+LOrExp: LOrExp = {
+    <land_exp: LAndExp> => LOrExp::And(land_exp),
+    <lor_exp: LOrExp> <or_op: OrOp> <land_exp: LAndExp> => 
+      LOrExp::Or(Box::new(lor_exp), or_op, Box::new(land_exp)),
+}
+
+OrOp: OrOp = {
+    "||" => OrOp::Or,
+}
+
+ConstExp: ConstExp = <exp: Exp> => ConstExp { exp };
+
+BType: BType = {
+  "int" => BType::Int,
+};
+
+
+
+Ident: String = r"[a-zA-Z_][a-zA-Z0-9_]*" => <>.to_string();
+
+Number: i32 = {
+  r"[1-9][0-9]*" => i32::from_str_radix(<>, 10).unwrap(),
+  r"0[0-7]*" => i32::from_str_radix(<>, 8).unwrap(),
+  r"0[xX][0-9a-fA-F]+" => i32::from_str_radix(&<>[2..], 16).unwrap(),
+}

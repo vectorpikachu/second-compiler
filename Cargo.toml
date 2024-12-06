@@ -4,3 +4,10 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+koopa = "0.0.8"
+lalrpop-util = { version = "0.22.0", features = ["lexer"] }
+
+
+
+[build-dependencies]
+lalrpop = "0.22.0"
