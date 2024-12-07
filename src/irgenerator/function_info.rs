@@ -1,6 +1,9 @@
 //! 用来记录当前的函数的信息
 
-use koopa::ir::{builder::{BasicBlockBuilder, LocalInstBuilder}, BasicBlock, Function, Program, Value};
+use koopa::ir::{
+    builder::{BasicBlockBuilder, LocalBuilder, LocalInstBuilder},
+    BasicBlock, Function, Program, Value,
+};
 
 pub struct FunctionInfo {
     /// 当前的函数
@@ -20,14 +23,14 @@ impl FunctionInfo {
         func: Function,
         entry_block: BasicBlock,
         exit_block: BasicBlock,
-        return_value: Value,
+        return_value: Option<Value>,
     ) -> Self {
         FunctionInfo {
             func,
             entry_block,
             exit_block,
             current_block: entry_block,
-            return_val: Some(return_value),
+            return_val: return_value,
         }
     }
 
@@ -51,7 +54,7 @@ impl FunctionInfo {
         &self.current_block
     }
 
-    /// 把一个块推入函数
+    /// 把一个块推入函数的 Layout 中
     pub fn push_block(&mut self, program: &mut Program, block: BasicBlock) {
         program
             .func_mut(self.func)
@@ -62,7 +65,7 @@ impl FunctionInfo {
         self.current_block = block;
     }
 
-    /// 把一个指令推入块
+    /// 把一个指令推入某个块中
     pub fn push_inst_to(&mut self, program: &mut Program, inst: Value, block: BasicBlock) {
         program
             .func_mut(self.func)
@@ -83,33 +86,45 @@ impl FunctionInfo {
         self.return_val
     }
 
-    /// 插入一个新的值
-    pub fn new_store_value<'a>(&self, program: &'a mut Program, src: Value, dst: Value) -> Value {
-        program.func_mut(self.func).dfg_mut().new_value().store(src, dst)
+    /// 创建一个新的值 / 指令
+    /// 为每个Value的种类写一个太麻烦了, 直接用它上面的哪一个
+    pub fn new_value<'a>(&self, program: &'a mut Program) -> LocalBuilder<'a> {
+        program.func_mut(self.func).dfg_mut().new_value()
     }
 
-    pub fn new_jump_value<'a>(&self, program: &'a mut Program, target: BasicBlock) -> Value {
-        program.func_mut(self.func).dfg_mut().new_value().jump(target)
-    }
-
-    /// Creates a new basic block in function.
-    pub fn new_bb(&self, program: &mut Program, name: Option<&str>) -> BasicBlock {
-        program
-        .func_mut(self.func)
-        .dfg_mut()
-        .new_bb()
-        .basic_block(name.map(|s| s.into()))
-    }
-
-    /// 插入一个新的基本块节点
-    pub fn new_bb_node(&self, program: &mut Program, block: BasicBlock) {
+    /// 为这个函数创建一个新的基本块
+    /// 首先在 DFG 中创建一个新的基本块
+    pub fn new_bb_dfg(&self, program: &mut Program, name: Option<&str>) -> BasicBlock {
         program
             .func_mut(self.func)
-            .layout_mut()
-            .bbs_mut()
-            .push_key_back(block)
-            .unwrap();
+            .dfg_mut()
+            .new_bb()
+            .basic_block(name.map(|s| s.into()))
     }
 
+    /// 指挥 entry_block 跳转到 我们的那个没名字的块中
+    pub fn make_entry_jump(&mut self, program: &mut Program, target: BasicBlock) {
+        let jump = self.new_value(program).jump(target);
+        self.push_inst_to(program, jump, self.entry_block);
+    }
 
+    /// 给函数收尾
+    pub fn make_function_exit(&mut self, program: &mut Program) {
+        let jump = self.new_value(program).jump(self.exit_block);
+        self.push_inst_to(program, jump, self.current_block);
+        // 接着把 exit_block 放入 Layout 中
+        self.push_block(program, self.exit_block);
+
+        // 为 exit_block 添加一个返回值
+        // self.return_val 是一个 Alloc 指令, 我们从中Load
+        if let Some(ret) = self.return_val {
+            let load = self.new_value(program).load(ret);
+            self.push_inst_to(program, load, self.exit_block);
+            let ret_inst = self.new_value(program).ret(Some(load));
+            self.push_inst_to(program, ret_inst, self.exit_block);
+        } else {
+            let ret_inst = self.new_value(program).ret(None);
+            self.push_inst_to(program, ret_inst, self.exit_block);
+        }
+    }
 }

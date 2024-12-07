@@ -7,6 +7,7 @@ use koopa::ir::{BasicBlock, Function, Value};
 use super::function_info::FunctionInfo;
 
 
+#[derive(Debug, Clone)]
 pub enum VarValue {
     Value(Value), // 一个变量
     Const(i32), // 一个常量
