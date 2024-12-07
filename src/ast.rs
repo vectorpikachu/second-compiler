@@ -266,7 +266,7 @@ pub enum BType {
 }
 
 /// FuncType ::= "int" | "void"
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum FuncType {
     Int,
     Void,

@@ -1,11 +1,4 @@
 fun @main(): i32 {
 %entry:
-  jump %while_entry1
-%while_entry1:
-  br 1, %while_body1, %while_end1
-%while_body1:
-  jump %while_end1
-  jump %while_entry1
-%while_end1:
-  ret 2
+  ret
 }

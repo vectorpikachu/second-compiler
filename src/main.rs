@@ -1,5 +1,7 @@
-
+mod irgenerator;
 mod ast;
+use irgenerator::generate_program;
+use koopa::back::KoopaGenerator;
 use lalrpop_util::lalrpop_mod;
 use std::io::Result;
 use std::env::args;
@@ -23,7 +25,12 @@ fn main() -> Result<()> {
     // 调用 lalrpop 生成的 parser 解析输入文件
     let ast = sysy::CompUnitParser::new().parse(&input).unwrap();
 
-    println!("{:#?}", ast);
+    println!("{:#?}", &ast);
+
+    let program = generate_program(&ast).unwrap();
+
+    // 输出到文件
+    KoopaGenerator::from_path(output).unwrap().generate_on(&program).unwrap();
 
     Ok(())
 }
