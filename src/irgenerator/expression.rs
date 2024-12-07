@@ -5,9 +5,33 @@ use koopa::ir::Value;
 use crate::ast::*;
 use super::scopes::*;
 
+#[derive(Debug, Clone)]
 pub enum ExpResult {
     Void,
     Int(Value),
+}
+
+impl ExpResult {
+    pub fn is_void(&self) -> bool {
+        match self {
+            ExpResult::Void => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_int(&self) -> bool {
+        match self {
+            ExpResult::Int(_) => true,
+            _ => false,
+        }
+    }
+
+    pub fn unwrap_int(&self) -> Value {
+        match self {
+            ExpResult::Int(value) => *value,
+            _ => unimplemented!(),
+        }
+    }
 }
 
 impl ConstExp {

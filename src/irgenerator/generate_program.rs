@@ -1,5 +1,5 @@
 //! 生成内存形式的IR代码
-use koopa::ir::{builder::{BasicBlockBuilder, LocalInstBuilder, ValueBuilder}, FunctionData, Program, Type, Value};
+use koopa::ir::{builder::{BasicBlockBuilder, LocalInstBuilder, ValueBuilder}, BinaryOp, FunctionData, Program, Type, Value};
 
 use crate::ast::*;
 use super::{expression::ExpResult, function_info::FunctionInfo, scopes::*};
@@ -146,7 +146,7 @@ impl FuncDef {
 }
 
 impl FuncType {
-    pub fn generate_program<'a>(&'a self, program: &mut Program, scopes: &mut Scopes<'a>) -> Type {
+    pub fn generate_program<'a>(&'a self, _program: &mut Program, _scopes: &mut Scopes<'a>) -> Type {
         match self {
             FuncType::Int => Type::get_i32(),
             FuncType::Void => Type::get_unit(),
@@ -187,19 +187,11 @@ impl Stmt {
 pub fn return_generate_program<'a>(ret_val: &Option<Exp>, program: &mut Program, scopes: &mut Scopes<'a>) {
     match ret_val {
         Some(exp) => {
-            let value = exp.generate_program(program, scopes);
+            let value = exp.generate_program(program, scopes).unwrap_int();
             let func_info = scopes.get_current_func_mut().unwrap();
-            let ret_inst: Value;
-            let ret_val = func_info.get_return_value().unwrap();
-            match value {
-                ExpResult::Int(x) => {
-                    ret_inst = func_info.new_value(program).store(x, ret_val);
-                    // 当前这个实际上是对 Return 语句求值了
-                    // 所以要把这个值放到 %retval 中
-                    func_info.push_inst(program, ret_inst);
-                }
-                _ => {}
-            }
+            let retval = func_info.get_return_value().unwrap();
+            let ret_inst  = func_info.new_value(program).store(value, retval);
+            func_info.push_inst(program, ret_inst);
         }
         None => {
             // 这是一个没有返回值的函数
@@ -225,9 +217,43 @@ impl Exp {
 impl LOrExp {
     pub fn generate_program(&self, program: &mut Program, scopes: &mut Scopes) -> ExpResult {
         match self {
-            LOrExp::And(and_exp) => and_exp.generate_program(program, scopes),
+            LOrExp::And(and_exp) => and_exp.generate_program(program, scopes).clone(),
             LOrExp::Or(left, _, right) => {
-                ExpResult::Void
+                // 直接实现短路求值
+                let left_value = left.generate_program(program, scopes).unwrap_int();
+                let right_value = right.generate_program(program, scopes).unwrap_int();
+                let func_info = scopes.get_current_func_mut().unwrap();
+                let result = func_info.new_value(program).alloc(Type::get_i32());
+                let zero = func_info.new_value(program).integer(0);
+                // 要把 left_value 和 zero 比较
+                let lhs_inst = func_info.new_value(program).binary(BinaryOp::NotEq, left_value, zero);
+                func_info.push_inst(program, lhs_inst);
+                // 把这个结果存到 result 中
+                let store_inst = func_info.new_value(program).store(lhs_inst, result);
+                func_info.push_inst(program, store_inst);
+                // 现在开始短路求值
+                // 有两个目的地, 一个是 right, 一个是 exit_block
+                let right_block = func_info.new_bb_dfg(program, Some("%or_false"));
+                let exit_block = func_info.new_bb_dfg(program, Some("%or_end"));
+                // 如果 left_value == 0, 那么跳转到 right_block
+                // 否则跳转到 exit_block
+                let branch_inst = func_info.new_value(program).branch(lhs_inst, right_block, exit_block);
+                func_info.push_inst(program, branch_inst);
+                // 先处理 right_block
+                func_info.push_block(program, right_block);
+                let rhs_inst = func_info.new_value(program).binary(BinaryOp::NotEq, right_value, zero);
+                func_info.push_inst(program, rhs_inst);
+                // 把这个结果存到 result 中
+                let store_inst = func_info.new_value(program).store(rhs_inst, result);
+                func_info.push_inst(program, store_inst);
+                // 跳转到 exit_block
+                let jump_inst = func_info.new_value(program).jump(exit_block);
+                func_info.push_inst(program, jump_inst);
+                // 处理 exit_block
+                func_info.push_block(program, exit_block);
+                let load_inst = func_info.new_value(program).load(result);
+                func_info.push_inst(program, load_inst);
+                ExpResult::Int(load_inst)
             }
         }
     }
