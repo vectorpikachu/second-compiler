@@ -413,9 +413,19 @@ pub fn return_generate_program<'a>(
         None => {
             // 这是一个没有返回值的函数
             // 直接写一个 ret 就可以了
+            // 但是如果是 int 返回值的, 补一个0
             let func_info = scopes.get_current_func_mut().unwrap();
-            let ret_inst = func_info.new_value(program).ret(None);
-            func_info.push_inst(program, ret_inst);
+            let ret_ty = program.func(*func_info.get_func()).ty();
+            if format!("{}", ret_ty).contains("i32") {
+                println!("Return Type: {:?}", ret_ty);
+                let zero = func_info.new_value(program).integer(0);
+                let retval = func_info.get_return_value().unwrap();
+                let store_inst = func_info.new_value(program).store(zero, retval);
+                func_info.push_inst(program, store_inst);
+            } else {
+                let ret_inst = func_info.new_value(program).ret(None);
+                func_info.push_inst(program, ret_inst);
+            }
         }
     }
     let func_info = scopes.get_current_func_mut().unwrap();

@@ -1,4 +1,4 @@
-global @a = alloc i32, 30
+global @a = alloc i32, 40
 
 decl @getint(): i32
 

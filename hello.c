@@ -1,4 +1,5 @@
-int a = 10 + 20;
+const int c = 10;
+int a = 10 + 20 + c;
 
 int inc() {
   a = a + 1;
@@ -21,5 +22,5 @@ int main() {
     print_a();
     i = i + 1;
   }
-  return 0;
+  return;
 }
