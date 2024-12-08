@@ -220,10 +220,10 @@ impl LOrExp {
             LOrExp::And(and_exp) => and_exp.generate_program(program, scopes).clone(),
             LOrExp::Or(left, _, right) => {
                 // 直接实现短路求值
+                let result = scopes.get_current_func().unwrap().new_value(program).alloc(Type::get_i32());
+                scopes.get_current_func_mut().unwrap().push_inst(program, result);
                 let left_value = left.generate_program(program, scopes).unwrap_int();
-                let right_value = right.generate_program(program, scopes).unwrap_int();
                 let func_info = scopes.get_current_func_mut().unwrap();
-                let result = func_info.new_value(program).alloc(Type::get_i32());
                 let zero = func_info.new_value(program).integer(0);
                 // 要把 left_value 和 zero 比较
                 let lhs_inst = func_info.new_value(program).binary(BinaryOp::NotEq, left_value, zero);
@@ -237,10 +237,12 @@ impl LOrExp {
                 let exit_block = func_info.new_bb_dfg(program, Some("%or_end"));
                 // 如果 left_value == 0, 那么跳转到 right_block
                 // 否则跳转到 exit_block
-                let branch_inst = func_info.new_value(program).branch(lhs_inst, right_block, exit_block);
+                let branch_inst = func_info.new_value(program).branch(lhs_inst, exit_block, right_block);
                 func_info.push_inst(program, branch_inst);
                 // 先处理 right_block
                 func_info.push_block(program, right_block);
+                let right_value = right.generate_program(program, scopes).unwrap_int();
+                let func_info = scopes.get_current_func_mut().unwrap();
                 let rhs_inst = func_info.new_value(program).binary(BinaryOp::NotEq, right_value, zero);
                 func_info.push_inst(program, rhs_inst);
                 // 把这个结果存到 result 中
@@ -264,7 +266,43 @@ impl LAndExp {
         match self {
             LAndExp::Eq(eq_exp) => eq_exp.generate_program(program, scopes),
             LAndExp::And(left, _, right) => {
-                ExpResult::Void
+                // 直接实现短路求值
+                let result = scopes.get_current_func().unwrap().new_value(program).alloc(Type::get_i32());
+                scopes.get_current_func_mut().unwrap().push_inst(program, result);
+                let left_value = left.generate_program(program, scopes).unwrap_int();
+                let func_info = scopes.get_current_func_mut().unwrap();
+                let zero = func_info.new_value(program).integer(0);
+                // 要把 left_value 和 zero 比较
+                let lhs_inst = func_info.new_value(program).binary(BinaryOp::NotEq, left_value, zero);
+                func_info.push_inst(program, lhs_inst);
+                // 把这个结果存到 result 中
+                let store_inst = func_info.new_value(program).store(lhs_inst, result);
+                func_info.push_inst(program, store_inst);
+                // 现在开始短路求值
+                // 有两个目的地, 一个是 right, 一个是 exit_block
+                let right_block = func_info.new_bb_dfg(program, Some("%and_true"));
+                let exit_block = func_info.new_bb_dfg(program, Some("%and_end"));
+                // 如果 left_value == 0, 那么跳转到 exit_block
+                // 否则跳转到 right_block
+                let branch_inst = func_info.new_value(program).branch(lhs_inst, right_block, exit_block);
+                func_info.push_inst(program, branch_inst);
+                // 先处理 right_block
+                func_info.push_block(program, right_block);
+                let right_value = right.generate_program(program, scopes).unwrap_int();
+                let func_info = scopes.get_current_func_mut().unwrap();
+                let rhs_inst = func_info.new_value(program).binary(BinaryOp::NotEq, right_value, zero);
+                func_info.push_inst(program, rhs_inst);
+                // 把这个结果存到 result 中
+                let store_inst = func_info.new_value(program).store(rhs_inst, result);
+                func_info.push_inst(program, store_inst);
+                // 跳转到 exit_block
+                let jump_inst = func_info.new_value(program).jump(exit_block);
+                func_info.push_inst(program, jump_inst);
+                // 处理 exit_block
+                func_info.push_block(program, exit_block);
+                let load_inst = func_info.new_value(program).load(result);
+                func_info.push_inst(program, load_inst);
+                ExpResult::Int(load_inst)
             }
         }
     }
@@ -277,14 +315,16 @@ impl EqExp {
             EqExp::Eq(left, op, right) => {
                 let left_value = left.generate_program(program, scopes);
                 let right_value = right.generate_program(program, scopes);
-                match op {
-                    EqOp::Eq => {
-                        ExpResult::Void
-                    }
-                    EqOp::Ne => {
-                        ExpResult::Void
-                    }
-                }
+                let binary_op = match op {
+                    EqOp::Eq => BinaryOp::Eq,
+                    EqOp::Ne => BinaryOp::NotEq,
+                };
+                let lhs_value = left_value.unwrap_int();
+                let rhs_value = right_value.unwrap_int();
+                let func_info = scopes.get_current_func_mut().unwrap();
+                let binary_inst = func_info.new_value(program).binary(binary_op, lhs_value, rhs_value);
+                func_info.push_inst(program, binary_inst);
+                ExpResult::Int(binary_inst)
             }
         }
     }
@@ -297,20 +337,18 @@ impl RelExp {
             RelExp::Rel(left, op, right) => {
                 let left_value = left.generate_program(program, scopes);
                 let right_value = right.generate_program(program, scopes);
-                match op {
-                    RelOp::Lt => {
-                        ExpResult::Void
-                    }
-                    RelOp::Gt => {
-                        ExpResult::Void
-                    }
-                    RelOp::Le => {
-                        ExpResult::Void
-                    }
-                    RelOp::Ge => {
-                        ExpResult::Void
-                    }
-                }
+                let binary_op = match op {
+                    RelOp::Lt => BinaryOp::Lt,
+                    RelOp::Gt => BinaryOp::Gt,
+                    RelOp::Le => BinaryOp::Le,
+                    RelOp::Ge => BinaryOp::Ge,
+                };
+                let lhs_value = left_value.unwrap_int();
+                let rhs_value = right_value.unwrap_int();
+                let func_info = scopes.get_current_func_mut().unwrap();
+                let binary_inst = func_info.new_value(program).binary(binary_op, lhs_value, rhs_value);
+                func_info.push_inst(program, binary_inst);
+                ExpResult::Int(binary_inst)
             }
         }
     }
@@ -323,14 +361,16 @@ impl AddExp {
             AddExp::Add(left, op, right) => {
                 let left_value = left.generate_program(program, scopes);
                 let right_value = right.generate_program(program, scopes);
-                match op {
-                    AddOp::Add => {
-                        ExpResult::Void
-                    }
-                    AddOp::Sub => {
-                        ExpResult::Void
-                    }
-                }
+                let binary_op = match op {
+                    AddOp::Add => BinaryOp::Add,
+                    AddOp::Sub => BinaryOp::Sub,
+                };
+                let lhs_value = left_value.unwrap_int();
+                let rhs_value = right_value.unwrap_int();
+                let func_info = scopes.get_current_func_mut().unwrap();
+                let binary_inst = func_info.new_value(program).binary(binary_op, lhs_value, rhs_value);
+                func_info.push_inst(program, binary_inst);
+                ExpResult::Int(binary_inst)
             }
         }
     }
@@ -343,17 +383,17 @@ impl MulExp {
             MulExp::Mul(left, op, right) => {
                 let left_value = left.generate_program(program, scopes);
                 let right_value = right.generate_program(program, scopes);
-                match op {
-                    MulOp::Mul => {
-                        ExpResult::Void
-                    }
-                    MulOp::Div => {
-                        ExpResult::Void
-                    }
-                    MulOp::Mod => {
-                        ExpResult::Void
-                    }
-                }
+                let binary_op = match op {
+                    MulOp::Mul => BinaryOp::Mul,
+                    MulOp::Div => BinaryOp::Div,
+                    MulOp::Mod => BinaryOp::Mod,
+                };
+                let lhs_value = left_value.unwrap_int();
+                let rhs_value = right_value.unwrap_int();
+                let func_info = scopes.get_current_func_mut().unwrap();
+                let binary_inst = func_info.new_value(program).binary(binary_op, lhs_value, rhs_value);
+                func_info.push_inst(program, binary_inst);
+                ExpResult::Int(binary_inst)
             }
         }
     }
@@ -366,15 +406,21 @@ impl UnaryExp {
             UnaryExp::Primary(primary_exp) => primary_exp.generate_program(program, scopes),
             UnaryExp::Unary(op, unary_exp) => {
                 let value = unary_exp.generate_program(program, scopes);
+                let int_value = value.unwrap_int();
+                let func_info = scopes.get_current_func_mut().unwrap();
                 match op {
-                    UnaryOp::Pos => {
-                        ExpResult::Void
-                    }
+                    UnaryOp::Pos => value,
                     UnaryOp::Neg => {
-                        ExpResult::Void
+                        let zero = func_info.new_value(program).integer(0);
+                        let sub_inst = func_info.new_value(program).binary(BinaryOp::Sub, zero, int_value);
+                        func_info.push_inst(program, sub_inst);
+                        ExpResult::Int(sub_inst)
                     }
                     UnaryOp::Not => {
-                        ExpResult::Void
+                        let zero = func_info.new_value(program).integer(0);
+                        let not_inst = func_info.new_value(program).binary(BinaryOp::Eq, int_value, zero);
+                        func_info.push_inst(program, not_inst);
+                        ExpResult::Int(not_inst)
                     }
                 }
             }
@@ -388,9 +434,7 @@ impl UnaryExp {
 impl PrimaryExp {
     pub fn generate_program(&self, program: &mut Program, scopes: &mut Scopes) -> ExpResult {
         match self {
-            PrimaryExp::LVal(lval) => {
-                lval.generate_program(program, scopes)
-            }
+            PrimaryExp::LVal(lval) => lval.generate_program(program, scopes),
             PrimaryExp::Number(x) => ExpResult::Int(
                 scopes.get_current_func_mut().unwrap().new_value(program).integer(*x)
             ),
@@ -407,6 +451,9 @@ impl LVal {
             Some(VarValue::Const(x)) => {
                 let func_info = scopes.get_current_func_mut().unwrap();
                 ExpResult::Int(func_info.new_value(program).integer(x))
+            }
+            Some(VarValue::Value(value)) => {
+                ExpResult::Int(value)
             }
             _ => {
                 ExpResult::Void
