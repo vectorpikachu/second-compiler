@@ -202,6 +202,9 @@ impl Stmt {
             Stmt::Block(block) => {
                 block.generate_program(program, scopes);
             }
+            Stmt::If(cond, true_br, false_br) => {
+                if_generate_program(cond, true_br, false_br, program, scopes);
+            }
             _ => {}
         }
     }
@@ -244,6 +247,36 @@ pub fn assign_generate_program(program: &mut Program, scopes: &mut Scopes, lval:
     println!("Return Type: {:?} {:?}", ty1, ty2);
     let store_inst = func_info.new_value(program).store(exp_value, lval_value);
     func_info.push_inst(program, store_inst);
+}
+
+pub fn if_generate_program<'a>(cond: &Exp, true_br: &'a Box<Stmt>, false_br: &'a Option<Box<Stmt>>, program: &mut Program, scopes: &mut Scopes<'a>) {
+    let cond_value = cond.generate_program(program, scopes).unwrap_int();
+    let func_info = scopes.get_current_func_mut().unwrap();
+    let true_block = func_info.new_bb_dfg(program, Some("%if_true"));
+    let false_block = func_info.new_bb_dfg(program, Some("%if_false"));
+    let branch_inst = func_info.new_value(program).branch(cond_value, true_block, false_block);
+    func_info.push_inst(program, branch_inst);
+
+    // 处理 true_block
+    func_info.push_block(program, true_block);
+    true_br.generate_program(program, scopes);
+    let func_info = scopes.get_current_func_mut().unwrap();
+    let end_block = func_info.new_bb_dfg(program, Some("%if_end"));
+    let jump_inst = func_info.new_value(program).jump(end_block);
+    func_info.push_inst(program, jump_inst);
+
+    // 处理 false_block
+    func_info.push_block(program, false_block);
+    if let Some(false_branch) = false_br {
+        false_branch.generate_program(program, scopes);
+    }
+    let func_info = scopes.get_current_func_mut().unwrap();
+    let jump_inst = func_info.new_value(program).jump(end_block);
+    func_info.push_inst(program, jump_inst);
+
+    // 产生 end_block
+    func_info.push_block(program, end_block);
+
 }
 
 impl Exp {
