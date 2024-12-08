@@ -1,5 +1,3 @@
-global @a = alloc i32, 40
-
 decl @getint(): i32
 
 decl @getch(): i32
@@ -16,79 +14,140 @@ decl @starttime()
 
 decl @stoptime()
 
-fun @inc(): i32 {
+fun @func(%0: i32): i32 {
 %entry:
   %retval = alloc i32
-  jump %0
+  @n = alloc i32
+  jump %1
 
-%0:
-  %1 = load @a
-  %2 = add %1, 1
-  store %2, @a
-  %3 = load @a
-  store %3, %retval
+%1:
+  store %0, @n
+  %2 = load @n
+  %3 = le %2, 50
+  br %3, %if_true, %if_false
+
+%if_true:
+  %4 = load @n
+  call @putint(%4)
+  store 1, %retval
   jump %exit
 
-%4:
+%5:
+  jump %if_end
+
+%if_false:
+  %6 = load @n
+  call @putint(%6)
+  store 0, %retval
+  jump %exit
+
+%7:
+  jump %if_end
+
+%if_end:
   jump %exit
 
 %exit:
-  %5 = load %retval
-  ret %5
-}
-
-fun @print_a() {
-%entry:
-  jump %6
-
-%6:
-  %7 = load @a
-  call @putint(%7)
-  call @putch(10)
-  jump %exit
-
-%exit:
-  ret
+  %8 = load %retval
+  ret %8
 }
 
 fun @main(): i32 {
 %entry:
   %retval = alloc i32
   @i = alloc i32
-  @a_0 = alloc i32
-  jump %8
+  jump %9
 
-%8:
+%9:
+  %10 = alloc i32
+  %11 = call @func(0)
+  %12 = eq %11, 1
+  %13 = ne %12, 0
+  store %13, %10
+  br %13, %or_end, %or_false
+
+%or_false:
+  %14 = alloc i32
+  %15 = call @func(50)
+  %16 = eq %15, 1
+  %17 = ne %16, 0
+  store %17, %14
+  br %17, %and_true, %and_end
+
+%and_true:
+  %18 = call @func(100)
+  %19 = eq %18, 0
+  %20 = ne %19, 0
+  store %20, %14
+  jump %and_end
+
+%and_end:
+  %21 = load %14
+  %22 = ne %21, 0
+  store %22, %10
+  jump %or_end
+
+%or_end:
+  %23 = load %10
+  br %23, %if_true, %if_false
+
+%if_true:
   store 0, @i
-  jump %while_entry
+  jump %if_end
 
-%while_entry:
-  %9 = load @i
-  %10 = lt %9, 10
-  br %10, %while_body, %while_exit
+%if_false:
+  store 1, @i
+  jump %if_end
 
-%while_body:
-  %11 = call @inc()
-  store 1, @a_0
-  %12 = load @a_0
-  %13 = add %12, 2
-  store %13, @a_0
-  %14 = load @a_0
-  call @putint(%14)
-  call @putch(10)
-  call @print_a()
-  %15 = load @i
-  %16 = add %15, 1
-  store %16, @i
-  jump %while_entry
+%if_end:
+  %24 = alloc i32
+  %25 = alloc i32
+  %26 = call @func(50)
+  %27 = eq %26, 1
+  %28 = ne %27, 0
+  store %28, %25
+  br %28, %and_true_0, %and_end_0
 
-%while_exit:
+%and_true_0:
+  %29 = call @func(40)
+  %30 = eq %29, 1
+  %31 = ne %30, 0
+  store %31, %25
+  jump %and_end_0
+
+%and_end_0:
+  %32 = load %25
+  %33 = ne %32, 0
+  store %33, %24
+  br %33, %or_end_0, %or_false_0
+
+%or_false_0:
+  %34 = call @func(1)
+  %35 = eq %34, 1
+  %36 = ne %35, 0
+  store %36, %24
+  jump %or_end_0
+
+%or_end_0:
+  %37 = load %24
+  br %37, %if_true_0, %if_false_0
+
+%if_true_0:
+  store 0, @i
+  jump %if_end_0
+
+%if_false_0:
+  store 1, @i
+  jump %if_end_0
+
+%if_end_0:
+  store 0, %retval
   jump %exit
 
-%17:
+%38:
   jump %exit
 
 %exit:
-  %18 = load %retval
-  ret %18
+  %39 = load %retval
+  ret %39
 }

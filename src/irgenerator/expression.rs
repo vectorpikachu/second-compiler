@@ -211,6 +211,7 @@ impl LVal {
     }
 }
 
+/// 只是对于单个的表达式求值
 impl InitVal {
     pub fn evaluate(&self, scopes: &Scopes) -> i32 {
         match self {

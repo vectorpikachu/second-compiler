@@ -114,22 +114,67 @@ impl ConstDef {
         // 首先, 这个常量的类型可能只是单纯的int, 也可能是数组
         // 此时应该处理数组的情况
         // 暂时先不处理
-        let value = self.init_val.generate_program(program, scopes);
-        scopes.set_value(&self.ident, VarValue::Const(value));
+        // 我们可以先不填充, 等到把evaluate完了之后再填充
+        // 要先通过 array_index 确定这个常量的类型
+        let ty = match self.array_index.len() {
+            0 => Type::get_i32(),
+            _ => {
+                let mut ty = Type::get_i32();
+                for _ in &self.array_index {
+                    ty = Type::get_pointer(ty);
+                }
+                ty
+            }
+        };
+
+        let index = self.array_index.iter().map(|exp| exp.evaluate(scopes)).collect();
+        let value = self.init_val.generate_program(program, scopes, index, 0);
+        let init_val = match value {
+            VarValue::Const(val) => program.new_value().integer(val),
+            VarValue::Value(value) => value,
+        };
+
+        if scopes.is_global_scope() {
+            
+            let global_value = program.new_value().global_alloc(init_val);
+            program.set_value_name(global_value, Some(format!("@{}", self.ident)));
+        } else {
+            let func_info = scopes.get_current_func_mut().unwrap();
+            let value = func_info.new_alloc_entry(program, ty, Some(&self.ident));
+            // TODO: Getelementptr.
+            func_info.push_inst(program, store_inst);
+        }
+        scopes.set_value(&self.ident, value);
     }
 }
 
 impl ConstInitVal {
-    pub fn generate_program(&self, program: &mut Program, scopes: &mut Scopes) -> i32 {
+    pub fn generate_program(&self, program: &mut Program, scopes: &mut Scopes, index: &Vec<i32>, x: usize) -> VarValue {
         match self {
-            ConstInitVal::Exp(exp) => exp.evaluate(scopes),
+            ConstInitVal::Exp(exp) => VarValue::Const(exp.evaluate(scopes)),
             ConstInitVal::Array(array) => {
                 let mut values = Vec::new();
+                let k = *index.get(x).unwrap();
+                let mut cur = 0;
                 for val in array {
-                    values.push(val.generate_program(program, scopes));
+                    cur += 1;
+                    let val = val.generate_program(program, scopes, index, x + 1);
+                    match val {
+                        VarValue::Const(val) => {
+                            let int_val = program.new_value().integer(val);
+                            values.push(int_val);
+                        }
+                        VarValue::Value(value) => {
+                            values.push(value);
+                        }
+                    }
                 }
-                // 暂时先不处理数组
-                0
+                for _ in cur..k {
+                    let zero = program.new_value().integer(0);
+                    values.push(zero);
+                }
+                let value = program.new_value().aggregate(values);
+                VarValue::Value(value)
             }
         }
     }
@@ -177,8 +222,6 @@ impl VarDef {
             Type::get_i32(),
             Some(&self.ident),
         );
-        println!("VarDef: {}", self.ident);
-        println!("Value: {:?}", value);
         match self.init_val {
             Some(ref init_val) => {
                 let init_value = init_val.generate_program(program, scopes).unwrap();
@@ -191,8 +234,6 @@ impl VarDef {
                     .get_current_func_mut()
                     .unwrap()
                     .push_inst(program, store_inst);
-                println!("Init Value: {:?}", init_value);
-                println!("Store Inst: {:?}", store_inst);
             }
             None => {}
         }
@@ -774,7 +815,6 @@ impl UnaryExp {
                         params.push(arg.generate_program(program, scopes).unwrap_int());
                     }
                 }
-                println!("Call: {}", ident);
                 let callee = *scopes.get_func(ident).unwrap();
                 let func_info = scopes.get_current_func_mut().unwrap();
                 let call_inst = func_info.new_value(program).call(callee, params);
@@ -848,7 +888,6 @@ impl LVal {
                 ExpResult::Int(func_info.new_value(program).integer(x))
             }
             Some(VarValue::Value(value)) => {
-                println!("I have arrived here. {}", self.ident);
                 // 我得到的是一个 alloc
                 ExpResult::Int(value)
             }
