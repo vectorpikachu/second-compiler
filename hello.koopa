@@ -1,123 +1,37 @@
 fun @main(): i32 {
 %entry:
   %retval = alloc i32
-  @a = alloc i32
-  @c = alloc i32
-  @d = alloc i32
-  @a_0 = alloc i32
+  @i = alloc i32
   jump %0
 
 %0:
-  store 0, @a
-  store 1, @c
-  store 2, @d
-  %1 = alloc i32
-  %2 = load @a
-  %3 = ne %2, 0
-  store %3, %1
-  br %3, %or_end, %or_false
+  store 0, @i
+  jump %while_entry
 
-%or_false:
-  %4 = ne 0, 0
-  store %4, %1
-  jump %or_end
+%while_entry:
+  %1 = load @i
+  %2 = lt %1, 10
+  br %2, %while_body, %while_exit
 
-%or_end:
-  %5 = load %1
-  br %5, %if_true, %if_false
+%while_body:
+  store 20, @i
+  jump %while_body
 
-%if_true:
-  store 3, @c
-  jump %if_end
+%3:
+  %4 = load @i
+  %5 = add %4, 1
+  store %5, @i
+  jump %while_entry
 
-%if_false:
-  store 3, @d
-  store 1, @a_0
-  %6 = alloc i32
-  %7 = load @a_0
-  %8 = ne %7, 0
-  store %8, %6
-  br %8, %or_end_0, %or_false_0
-
-%or_false_0:
-  %9 = ne 0, 0
-  store %9, %6
-  jump %or_end_0
-
-%or_end_0:
-  %10 = load %6
-  br %10, %if_true_0, %if_false_0
-
-%if_true_0:
-  store 4, @c
-  jump %if_end_0
-
-%if_false_0:
-  store 4, @d
-  jump %if_end_0
-
-%if_end_0:
-  %11 = load @a_0
-  %12 = eq %11, 0
-  br %12, %if_true_1, %if_false_1
-
-%if_true_1:
-  store 1, %retval
+%while_exit:
+  %6 = load @i
+  store %6, %retval
   jump %exit
 
-%13:
-  jump %if_end_1
-
-%if_false_1:
-  %14 = alloc i32
-  %15 = load @a_0
-  %16 = eq %15, 0
-  %17 = ne %16, 0
-  store %17, %14
-  br %17, %and_true, %and_end
-
-%and_true:
-  %18 = load @a_0
-  %19 = sub 0, 1
-  %20 = eq %18, %19
-  %21 = ne %20, 0
-  store %21, %14
-  jump %and_end
-
-%and_end:
-  %22 = load %14
-  br %22, %if_true_2, %if_false_2
-
-%if_true_2:
-  store 2, %retval
-  jump %exit
-
-%23:
-  jump %if_end_2
-
-%if_false_2:
-  jump %if_end_2
-
-%if_end_2:
-  jump %if_end_1
-
-%if_end_1:
-  jump %if_end
-
-%if_end:
-  %24 = load @a
-  %25 = add %24, 0
-  %26 = load @c
-  %27 = add %25, %26
-  %28 = load @d
-  %29 = add %27, %28
-  store %29, %retval
-  jump %exit
-
-%30:
+%7:
   jump %exit
 
 %exit:
-  %31 = load %retval
-  ret %31
+  %8 = load %retval
+  ret %8
 }

@@ -205,6 +205,34 @@ impl Stmt {
             Stmt::If(cond, true_br, false_br) => {
                 if_generate_program(cond, true_br, false_br, program, scopes);
             }
+            Stmt::While(cond, body) => {
+                while_generate_program(cond, body, program, scopes);
+            }
+            Stmt::Break => {
+                let exit = {
+                    let (_, exit) = scopes.get_current_loop_mut().unwrap();
+                    *exit
+                };
+                let func_info = scopes.get_current_func_mut().unwrap();
+                let jump_inst = func_info.new_value(program).jump(exit);
+                func_info.push_inst(program, jump_inst);
+
+                let new_block = func_info.new_bb_dfg(program, None);
+                func_info.push_block(program, new_block);
+            }
+            Stmt::Continue => {
+                // 和 break 不同的点在于, continue 要跳转到 entry
+                let entry = {
+                    let (entry, _) = scopes.get_current_loop_mut().unwrap();
+                    *entry
+                };
+                let func_info = scopes.get_current_func_mut().unwrap();
+                let jump_inst = func_info.new_value(program).jump(entry);
+                func_info.push_inst(program, jump_inst);
+
+                let new_block = func_info.new_bb_dfg(program, None);
+                func_info.push_block(program, new_block);
+            }
             _ => {}
         }
     }
@@ -276,8 +304,37 @@ pub fn if_generate_program<'a>(cond: &Exp, true_br: &'a Box<Stmt>, false_br: &'a
 
     // 产生 end_block
     func_info.push_block(program, end_block);
-
 }
+
+pub fn while_generate_program<'a>(cond: &Exp, body: &'a Stmt, program: &mut Program, scopes: &mut Scopes<'a>) {
+    let func_info = scopes.get_current_func_mut().unwrap();
+    // 首先进入 entry block
+    let entry_block = func_info.new_bb_dfg(program, Some("%while_entry"));
+    let jump_inst = func_info.new_value(program).jump(entry_block);
+    func_info.push_inst(program, jump_inst);
+    func_info.push_block(program, entry_block);
+    let cond_value = cond.generate_program(program, scopes).unwrap_int();
+
+    // 接下来处理 entry 的跳转语句
+    let func_info = scopes.get_current_func_mut().unwrap();
+    let body_block = func_info.new_bb_dfg(program, Some("%while_body"));
+    let exit_block = func_info.new_bb_dfg(program, Some("%while_exit"));
+    let branch_inst = func_info.new_value(program).branch(cond_value, body_block, exit_block);
+    func_info.push_inst(program, branch_inst);
+
+    // 处理 body_block
+    func_info.push_block(program, body_block);
+    scopes.enter_loop(entry_block, exit_block);
+    body.generate_program(program, scopes);
+    scopes.exit_loop();
+    let func_info = scopes.get_current_func_mut().unwrap();
+    let jump_inst = func_info.new_value(program).jump(entry_block);
+    func_info.push_inst(program, jump_inst);
+    
+    // 处理 exit_block
+    func_info.push_block(program, exit_block);
+}
+
 
 impl Exp {
     pub fn generate_program(&self, program: &mut Program, scopes: &mut Scopes) -> ExpResult {

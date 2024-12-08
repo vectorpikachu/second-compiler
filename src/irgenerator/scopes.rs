@@ -76,6 +76,10 @@ impl<'a> Scopes<'a> {
         self.loop_stack.last()
     }
 
+    pub fn get_current_loop_mut(&mut self) -> Option<&(BasicBlock, BasicBlock)> {
+        self.loop_stack.last()
+    }
+
     /// 进入一个循环
     pub fn enter_loop(&mut self, enter: BasicBlock, exit: BasicBlock) {
         self.loop_stack.push((enter, exit));
