@@ -1,8 +1,7 @@
 //! 用来记录当前的函数的信息
 
 use koopa::ir::{
-    builder::{BasicBlockBuilder, LocalBuilder, LocalInstBuilder},
-    BasicBlock, Function, Program, Value,
+    builder::{BasicBlockBuilder, LocalBuilder, LocalInstBuilder}, BasicBlock, Function, Program, Type, Value
 };
 
 pub struct FunctionInfo {
@@ -126,5 +125,19 @@ impl FunctionInfo {
             let ret_inst = self.new_value(program).ret(None);
             self.push_inst_to(program, ret_inst, self.exit_block);
         }
+    }
+
+    /// 获取一个新的 Alloc 指令
+    /// 而且加入 entry block
+    pub fn new_alloc_entry(&mut self, program: &mut Program, ty: Type, name: Option<&str>) -> Value {
+        let alloc = self.new_value(program).alloc(ty);
+        if let Some(name) = name {
+            program
+                .func_mut(self.func)
+                .dfg_mut()
+                .set_value_name(alloc, Some(format!("@{}", name)));
+        }
+        self.push_inst_to(program, alloc, self.entry_block);
+        alloc
     }
 }

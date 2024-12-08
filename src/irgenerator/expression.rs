@@ -54,9 +54,10 @@ impl LOrExp {
                 let left_value = left.evaluate(scopes);
                 // 一种短路求值的方式
                 if left_value != 0 {
-                    left_value
+                    1
                 } else {
-                    right.evaluate(scopes)
+                    let right_value = right.evaluate(scopes);
+                    if right_value != 0 {1} else {0}
                 }
             }
         }
@@ -71,9 +72,10 @@ impl LAndExp {
                 let left_value = left.evaluate(scopes);
                 // 一种短路求值的方式
                 if left_value == 0 {
-                    left_value
+                    0
                 } else {
-                    right.evaluate(scopes)
+                    let right_value = right.evaluate(scopes);
+                    if right_value == 0 {0} else {1}
                 }
             }
         }
@@ -192,7 +194,7 @@ impl UnaryExp {
                 match op {
                     UnaryOp::Pos => value,
                     UnaryOp::Neg => -value,
-                    UnaryOp::Not => !value,
+                    UnaryOp::Not => if value != 0 {0} else {1},
                 }
             }
             _ => unimplemented!(),

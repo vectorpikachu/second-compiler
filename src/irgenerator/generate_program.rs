@@ -1,5 +1,7 @@
 //! 生成内存形式的IR代码
-use koopa::ir::{builder::{BasicBlockBuilder, LocalInstBuilder, ValueBuilder}, BinaryOp, FunctionData, Program, Type, Value};
+use core::alloc;
+
+use koopa::ir::{builder::{BasicBlockBuilder, LocalInstBuilder, ValueBuilder}, BinaryOp, FunctionData, Program, Type, Value, ValueKind};
 
 use crate::ast::*;
 use super::{expression::ExpResult, function_info::FunctionInfo, scopes::*};
@@ -82,8 +84,24 @@ impl VarDef {
         // 首先, 这个变量的类型可能只是单纯的int, 也可能是数组
         // 此时应该处理数组的情况
         // 暂时先不处理
+        /*
+         * 根据是否是全局变量, 生成不同的代码
+         */
         // 生成一个alloc指令
-        // TODO: Do it later.
+        let value = scopes.get_current_func_mut().unwrap().new_alloc_entry(program, Type::get_i32(), Some(&self.ident));
+        println!("VarDef: {}", self.ident);
+        println!("Value: {:?}", value);
+        match self.init_val {
+            Some(ref init_val) => {
+                let init_value = init_val.generate_program(program, scopes).unwrap();
+                let store_inst = scopes.get_current_func().unwrap().new_value(program).store(init_value, value);
+                scopes.get_current_func_mut().unwrap().push_inst(program, store_inst);
+                println!("Init Value: {:?}", init_value);
+                println!("Store Inst: {:?}", store_inst);
+            }
+            None => {}
+        }
+        scopes.set_value(&self.ident, VarValue::Value(value));
     }
 }
 
@@ -179,6 +197,9 @@ impl Stmt {
             Stmt::Return(ret_val) => {
                 return_generate_program(ret_val, program, scopes);
             }
+            Stmt::Assign(lval, exp) => {
+                assign_generate_program(program, scopes, lval, exp);
+            }
             _ => {}
         }
     }
@@ -190,6 +211,10 @@ pub fn return_generate_program<'a>(ret_val: &Option<Exp>, program: &mut Program,
             let value = exp.generate_program(program, scopes).unwrap_int();
             let func_info = scopes.get_current_func_mut().unwrap();
             let retval = func_info.get_return_value().unwrap();
+            // 输出类型
+            let ty1 = program.func(*func_info.get_func()).dfg().value(value).kind();
+            let ty2 = program.func(*func_info.get_func()).dfg().value(retval).kind();
+            println!("Return Type: {:?} {:?}", ty1, ty2);
             let ret_inst  = func_info.new_value(program).store(value, retval);
             func_info.push_inst(program, ret_inst);
         }
@@ -206,6 +231,17 @@ pub fn return_generate_program<'a>(ret_val: &Option<Exp>, program: &mut Program,
     // 放入一个新的块
     let new_block = func_info.new_bb_dfg(program, None);
     func_info.push_block(program, new_block);
+}
+
+pub fn assign_generate_program(program: &mut Program, scopes: &mut Scopes, lval: &LVal, exp: &Exp) {
+    let lval_value = lval.generate_program(program, scopes).unwrap_int();
+    let exp_value = exp.generate_program(program, scopes).unwrap_int();
+    let func_info = scopes.get_current_func_mut().unwrap();
+    let ty1 = program.func(*func_info.get_func()).dfg().value(exp_value).kind();
+    let ty2 = program.func(*func_info.get_func()).dfg().value(lval_value).kind();
+    println!("Return Type: {:?} {:?}", ty1, ty2);
+    let store_inst = func_info.new_value(program).store(exp_value, lval_value);
+    func_info.push_inst(program, store_inst);
 }
 
 impl Exp {
@@ -434,7 +470,23 @@ impl UnaryExp {
 impl PrimaryExp {
     pub fn generate_program(&self, program: &mut Program, scopes: &mut Scopes) -> ExpResult {
         match self {
-            PrimaryExp::LVal(lval) => lval.generate_program(program, scopes),
+            PrimaryExp::LVal(lval) => {
+                // Load the alloc value
+                let value = lval.generate_program(program, scopes).unwrap_int();
+                let ty = program.func(*scopes.get_current_func().unwrap().get_func()).dfg().value(value).kind();
+                match ty {
+                    ValueKind::Integer(_) => {
+                        ExpResult::Int(value)
+                    }
+                    _ => {
+                        let func_info = scopes.get_current_func_mut().unwrap();
+                        let load_inst = func_info.new_value(program).load(value);
+                        func_info.push_inst(program, load_inst);
+                        ExpResult::Int(load_inst)
+                    }
+                }
+            }
+            
             PrimaryExp::Number(x) => ExpResult::Int(
                 scopes.get_current_func_mut().unwrap().new_value(program).integer(*x)
             ),
@@ -453,10 +505,26 @@ impl LVal {
                 ExpResult::Int(func_info.new_value(program).integer(x))
             }
             Some(VarValue::Value(value)) => {
+                println!("I have arrived here. {}", self.ident);
+                // 我得到的是一个 alloc
                 ExpResult::Int(value)
             }
             _ => {
                 ExpResult::Void
+            }
+        }
+    }
+}
+
+impl InitVal {
+    pub fn generate_program(&self, program: &mut Program, scopes: &mut Scopes) -> Option<Value> {
+        match self {
+            InitVal::Exp(exp) => {
+                Some(exp.generate_program(program, scopes).unwrap_int())
+            }
+            InitVal::Array(_array) => {
+                // 暂时先不处理数组
+                None
             }
         }
     }
