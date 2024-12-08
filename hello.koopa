@@ -83,7 +83,6 @@ fun @main(): i32 {
   jump %while_entry
 
 %while_exit:
-  store 0, %retval
   jump %exit
 
 %17:
