@@ -1,5 +1,4 @@
 //! 生成内存形式的IR代码
-use core::alloc;
 
 use koopa::ir::{builder::{BasicBlockBuilder, LocalInstBuilder, ValueBuilder}, BinaryOp, FunctionData, Program, Type, Value, ValueKind};
 
@@ -199,6 +198,9 @@ impl Stmt {
             }
             Stmt::Assign(lval, exp) => {
                 assign_generate_program(program, scopes, lval, exp);
+            }
+            Stmt::Block(block) => {
+                block.generate_program(program, scopes);
             }
             _ => {}
         }

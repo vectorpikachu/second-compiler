@@ -4,7 +4,7 @@ fun @main(): i32 {
   jump %0
 
 %0:
-  store 1, %retval
+  store 20, %retval
   jump %exit
 
 %1:
