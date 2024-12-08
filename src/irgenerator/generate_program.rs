@@ -114,8 +114,14 @@ impl FuncDef {
          * 所有的返回值都首先被分配到一个堆的变量 %retval 里
          */
         let func_ty = self.ty.generate_program(program, scopes);
-        // TODO: Params Type
-        let mut func_data = FunctionData::new(format!("@{}", self.ident), Vec::new(), func_ty);
+        // TODO: Array Type
+        // 现阶段所有的参数都是 int 类型的
+        let mut params_ty: Vec<Type> = Vec::new();
+        if let Some(params) = &self.params {
+            params.get_type(&mut params_ty);
+        }
+
+        let mut func_data = FunctionData::new(format!("@{}", self.ident), params_ty, func_ty);
         
         // 接下来, 生成函数的入口块
         let entry_block = func_data.dfg_mut().new_bb().basic_block(Some("%entry".to_string()));
@@ -148,7 +154,11 @@ impl FuncDef {
         function_info.push_block(program, cur_block); // 更新 Layout
 
         scopes.enter_scope();
-        // TODO: Params
+        // TODO: Arrays
+        if let Some(params) = &self.params {
+            let program_params = program.func(func).params().to_vec();
+            params.generate_program(program, scopes, program_params, &mut function_info);
+        }
         // 我们创建了这个函数的作用域, 应当把它的名字等放入
         scopes.add_func(&self.ident, func);
         scopes.set_current_func(function_info);
@@ -168,6 +178,31 @@ impl FuncType {
             FuncType::Int => Type::get_i32(),
             FuncType::Void => Type::get_unit(),
         }
+    }
+}
+
+impl FuncFParams {
+    pub fn generate_program<'a>(&'a self, program: &mut Program, scopes: &mut Scopes<'a>, program_params: Vec<Value>, func: &mut FunctionInfo) {
+        for (param, program_param) in self.params.iter().zip(program_params) {
+            param.generate_program(program, scopes, program_param, func);
+        }
+    }
+
+    pub fn get_type(&self, params_ty: &mut Vec<Type>) {
+        for _param in &self.params {
+            params_ty.push(Type::get_i32());
+        }
+    }
+}
+
+impl FuncFParam {
+    pub fn generate_program<'a>(&'a self, program: &mut Program, scopes: &mut Scopes<'a>, program_param: Value, func: &mut FunctionInfo) {
+        // 现阶段所有的参数都是 int 类型的
+        let alloc_value = func.new_alloc_entry(program, Type::get_i32(), Some(&self.ident));
+        // 然后 把 @x store 到 %x 中
+        let store_inst = func.new_value(program).store(program_param, alloc_value);
+        func.push_inst(program, store_inst);
+        scopes.set_value(&self.ident, VarValue::Value(alloc_value));
     }
 }
 
@@ -233,7 +268,14 @@ impl Stmt {
                 let new_block = func_info.new_bb_dfg(program, None);
                 func_info.push_block(program, new_block);
             }
-            _ => {}
+            Stmt::Exp(exp) => {
+                match exp {
+                    Some(exp) => {
+                        exp.generate_program(program, scopes);
+                    }
+                    None => {}
+                }
+            }
         }
     }
 }
@@ -253,6 +295,10 @@ pub fn return_generate_program<'a>(ret_val: &Option<Exp>, program: &mut Program,
         }
         None => {
             // 这是一个没有返回值的函数
+            // 直接写一个 ret 就可以了
+            let func_info = scopes.get_current_func_mut().unwrap();
+            let ret_inst = func_info.new_value(program).ret(None);
+            func_info.push_inst(program, ret_inst);
         }
     }
     let func_info = scopes.get_current_func_mut().unwrap();
@@ -552,8 +598,18 @@ impl UnaryExp {
                     }
                 }
             }
-            UnaryExp::Call(_, _) => {
-                ExpResult::Void
+            UnaryExp::Call(ident, args) => {
+                let mut params = Vec::new();
+                if let Some(args) = args {
+                    for arg in &args.params {
+                        params.push(arg.generate_program(program, scopes).unwrap_int());
+                    }
+                }
+                let callee = *scopes.get_func(ident).unwrap();
+                let func_info = scopes.get_current_func_mut().unwrap();
+                let call_inst = func_info.new_value(program).call(callee, params);
+                func_info.push_inst(program, call_inst);
+                ExpResult::Int(call_inst)
             }
         }
     }

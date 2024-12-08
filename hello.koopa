@@ -1,37 +1,41 @@
-fun @main(): i32 {
+fun @add(%0: i32, %1: i32): i32 {
 %entry:
   %retval = alloc i32
-  @i = alloc i32
-  jump %0
+  @a = alloc i32
+  @b = alloc i32
+  jump %2
 
-%0:
-  store 0, @i
-  jump %while_entry
-
-%while_entry:
-  %1 = load @i
-  %2 = lt %1, 10
-  br %2, %while_body, %while_exit
-
-%while_body:
-  store 20, @i
-  jump %while_body
-
-%3:
-  %4 = load @i
-  %5 = add %4, 1
-  store %5, @i
-  jump %while_entry
-
-%while_exit:
-  %6 = load @i
-  store %6, %retval
+%2:
+  store %0, @a
+  store %1, @b
+  %3 = load @a
+  %4 = load @b
+  %5 = add %3, %4
+  store %5, %retval
   jump %exit
 
-%7:
+%6:
   jump %exit
 
 %exit:
-  %8 = load %retval
-  ret %8
+  %7 = load %retval
+  ret %7
+}
+
+fun @main(): i32 {
+%entry:
+  %retval = alloc i32
+  jump %8
+
+%8:
+  %9 = call @add(1, 2)
+  store %9, %retval
+  jump %exit
+
+%10:
+  jump %exit
+
+%exit:
+  %11 = load %retval
+  ret %11
 }
