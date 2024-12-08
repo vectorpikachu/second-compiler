@@ -38,20 +38,12 @@ impl FunctionInfo {
         &self.func
     }
 
-    /// 得到当前的函数的入口
-    pub fn get_entry_block(&self) -> &BasicBlock {
-        &self.entry_block
-    }
 
     /// 得到当前的函数的出口
     pub fn get_exit_block(&self) -> &BasicBlock {
         &self.exit_block
     }
 
-    /// 得到当前的块
-    pub fn get_current_block(&self) -> &BasicBlock {
-        &self.current_block
-    }
 
     /// 把一个块推入函数的 Layout 中
     pub fn push_block(&mut self, program: &mut Program, block: BasicBlock) {

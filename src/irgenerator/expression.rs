@@ -12,20 +12,6 @@ pub enum ExpResult {
 }
 
 impl ExpResult {
-    pub fn is_void(&self) -> bool {
-        match self {
-            ExpResult::Void => true,
-            _ => false,
-        }
-    }
-
-    pub fn is_int(&self) -> bool {
-        match self {
-            ExpResult::Int(_) => true,
-            _ => false,
-        }
-    }
-
     pub fn unwrap_int(&self) -> Value {
         match self {
             ExpResult::Int(value) => *value,
@@ -221,6 +207,17 @@ impl LVal {
             }
         } else {
             unimplemented!()
+        }
+    }
+}
+
+impl InitVal {
+    pub fn evaluate(&self, scopes: &Scopes) -> i32 {
+        match self {
+            InitVal::Exp(exp) => exp.evaluate(scopes),
+            _ => {
+                unimplemented!()
+            }
         }
     }
 }

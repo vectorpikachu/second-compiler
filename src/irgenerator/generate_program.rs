@@ -1,12 +1,80 @@
 //! 生成内存形式的IR代码
 
-use koopa::ir::{builder::{BasicBlockBuilder, LocalInstBuilder, ValueBuilder}, BinaryOp, FunctionData, Program, Type, Value, ValueKind};
+use koopa::ir::{
+    builder::{BasicBlockBuilder, GlobalInstBuilder, LocalInstBuilder, ValueBuilder},
+    BinaryOp, FunctionData, Program, Type, Value, ValueKind,
+};
 
-use crate::ast::*;
 use super::{expression::ExpResult, function_info::FunctionInfo, scopes::*};
+use crate::ast::*;
 
 impl CompUnit {
     pub fn generate_program<'a>(&'a self, program: &mut Program, scopes: &mut Scopes<'a>) {
+        // 应该声明所有的库函数
+        scopes.add_func(
+            "getint",
+            program.new_func(FunctionData::new_decl(
+                "@getint".to_string(),
+                Vec::new(),
+                Type::get_i32(),
+            )),
+        );
+        scopes.add_func(
+            "getch",
+            program.new_func(FunctionData::new_decl(
+                "@getch".to_string(),
+                Vec::new(),
+                Type::get_i32(),
+            )),
+        );
+        scopes.add_func(
+            "getarray",
+            program.new_func(FunctionData::new_decl(
+                "@getint".to_string(),
+                vec![Type::get_pointer(Type::get_i32())],
+                Type::get_i32(),
+            )),
+        );
+        scopes.add_func(
+            "putint",
+            program.new_func(FunctionData::new_decl(
+                "@putint".to_string(),
+                vec![Type::get_i32()],
+                Type::get_unit(),
+            )),
+        );
+        scopes.add_func(
+            "putch",
+            program.new_func(FunctionData::new_decl(
+                "@putch".to_string(),
+                vec![Type::get_i32()],
+                Type::get_unit(),
+            )),
+        );
+        scopes.add_func(
+            "putarray",
+            program.new_func(FunctionData::new_decl(
+                "@putarray".to_string(),
+                vec![Type::get_i32(), Type::get_pointer(Type::get_i32())],
+                Type::get_unit(),
+            )),
+        );
+        scopes.add_func(
+            "starttime",
+            program.new_func(FunctionData::new_decl(
+                "@starttime".to_string(),
+                Vec::new(),
+                Type::get_unit(),
+            )),
+        );
+        scopes.add_func(
+            "stoptime",
+            program.new_func(FunctionData::new_decl(
+                "@stoptime".to_string(),
+                Vec::new(),
+                Type::get_unit(),
+            )),
+        );
         for entry in &self.entries {
             entry.generate_program(program, scopes);
         }
@@ -65,7 +133,6 @@ impl ConstInitVal {
             }
         }
     }
-    
 }
 
 impl VarDecl {
@@ -86,15 +153,44 @@ impl VarDef {
         /*
          * 根据是否是全局变量, 生成不同的代码
          */
+        if scopes.is_global_scope() {
+            match self.init_val {
+                Some(ref init_val) => {
+                    let value = init_val.evaluate(scopes);
+                    let init_val = program.new_value().integer(value);
+                    let global_value = program.new_value().global_alloc(init_val);
+                    program.set_value_name(global_value, Some(format!("@{}", self.ident)));
+                    scopes.set_value(&self.ident, VarValue::Value(global_value));
+                }
+                None => {
+                    let zero_init_value = program.new_value().zero_init(Type::get_i32());
+                    let global_value = program.new_value().global_alloc(zero_init_value);
+                    program.set_value_name(global_value, Some(format!("@{}", self.ident)));
+                    scopes.set_value(&self.ident, VarValue::Value(global_value));
+                }
+            }
+            return;
+        }
         // 生成一个alloc指令
-        let value = scopes.get_current_func_mut().unwrap().new_alloc_entry(program, Type::get_i32(), Some(&self.ident));
+        let value = scopes.get_current_func_mut().unwrap().new_alloc_entry(
+            program,
+            Type::get_i32(),
+            Some(&self.ident),
+        );
         println!("VarDef: {}", self.ident);
         println!("Value: {:?}", value);
         match self.init_val {
             Some(ref init_val) => {
                 let init_value = init_val.generate_program(program, scopes).unwrap();
-                let store_inst = scopes.get_current_func().unwrap().new_value(program).store(init_value, value);
-                scopes.get_current_func_mut().unwrap().push_inst(program, store_inst);
+                let store_inst = scopes
+                    .get_current_func()
+                    .unwrap()
+                    .new_value(program)
+                    .store(init_value, value);
+                scopes
+                    .get_current_func_mut()
+                    .unwrap()
+                    .push_inst(program, store_inst);
                 println!("Init Value: {:?}", init_value);
                 println!("Store Inst: {:?}", store_inst);
             }
@@ -122,20 +218,27 @@ impl FuncDef {
         }
 
         let mut func_data = FunctionData::new(format!("@{}", self.ident), params_ty, func_ty);
-        
+
         // 接下来, 生成函数的入口块
-        let entry_block = func_data.dfg_mut().new_bb().basic_block(Some("%entry".to_string()));
-        let exit_block = func_data.dfg_mut().new_bb().basic_block(Some("%exit".to_string()));
+        let entry_block = func_data
+            .dfg_mut()
+            .new_bb()
+            .basic_block(Some("%entry".to_string()));
+        let exit_block = func_data
+            .dfg_mut()
+            .new_bb()
+            .basic_block(Some("%exit".to_string()));
         let cur_block = func_data.dfg_mut().new_bb().basic_block(None);
         let mut ret: Option<Value> = None;
         if self.ty == FuncType::Int {
             // 直接把所有返回值扔到一个变量里面
             let alloc = func_data.dfg_mut().new_value().alloc(Type::get_i32());
-            func_data.dfg_mut().set_value_name(alloc, Some("%retval".to_string()));
+            func_data
+                .dfg_mut()
+                .set_value_name(alloc, Some("%retval".to_string()));
             ret = Some(alloc);
         }
-        
-        
+
         // Add function to program
         let func = program.new_func(func_data);
 
@@ -173,7 +276,11 @@ impl FuncDef {
 }
 
 impl FuncType {
-    pub fn generate_program<'a>(&'a self, _program: &mut Program, _scopes: &mut Scopes<'a>) -> Type {
+    pub fn generate_program<'a>(
+        &'a self,
+        _program: &mut Program,
+        _scopes: &mut Scopes<'a>,
+    ) -> Type {
         match self {
             FuncType::Int => Type::get_i32(),
             FuncType::Void => Type::get_unit(),
@@ -182,7 +289,13 @@ impl FuncType {
 }
 
 impl FuncFParams {
-    pub fn generate_program<'a>(&'a self, program: &mut Program, scopes: &mut Scopes<'a>, program_params: Vec<Value>, func: &mut FunctionInfo) {
+    pub fn generate_program<'a>(
+        &'a self,
+        program: &mut Program,
+        scopes: &mut Scopes<'a>,
+        program_params: Vec<Value>,
+        func: &mut FunctionInfo,
+    ) {
         for (param, program_param) in self.params.iter().zip(program_params) {
             param.generate_program(program, scopes, program_param, func);
         }
@@ -196,7 +309,13 @@ impl FuncFParams {
 }
 
 impl FuncFParam {
-    pub fn generate_program<'a>(&'a self, program: &mut Program, scopes: &mut Scopes<'a>, program_param: Value, func: &mut FunctionInfo) {
+    pub fn generate_program<'a>(
+        &'a self,
+        program: &mut Program,
+        scopes: &mut Scopes<'a>,
+        program_param: Value,
+        func: &mut FunctionInfo,
+    ) {
         // 现阶段所有的参数都是 int 类型的
         let alloc_value = func.new_alloc_entry(program, Type::get_i32(), Some(&self.ident));
         // 然后 把 @x store 到 %x 中
@@ -268,29 +387,27 @@ impl Stmt {
                 let new_block = func_info.new_bb_dfg(program, None);
                 func_info.push_block(program, new_block);
             }
-            Stmt::Exp(exp) => {
-                match exp {
-                    Some(exp) => {
-                        exp.generate_program(program, scopes);
-                    }
-                    None => {}
+            Stmt::Exp(exp) => match exp {
+                Some(exp) => {
+                    exp.generate_program(program, scopes);
                 }
-            }
+                None => {}
+            },
         }
     }
 }
 
-pub fn return_generate_program<'a>(ret_val: &Option<Exp>, program: &mut Program, scopes: &mut Scopes<'a>) {
+pub fn return_generate_program<'a>(
+    ret_val: &Option<Exp>,
+    program: &mut Program,
+    scopes: &mut Scopes<'a>,
+) {
     match ret_val {
         Some(exp) => {
             let value = exp.generate_program(program, scopes).unwrap_int();
             let func_info = scopes.get_current_func_mut().unwrap();
             let retval = func_info.get_return_value().unwrap();
-            // 输出类型
-            let ty1 = program.func(*func_info.get_func()).dfg().value(value).kind();
-            let ty2 = program.func(*func_info.get_func()).dfg().value(retval).kind();
-            println!("Return Type: {:?} {:?}", ty1, ty2);
-            let ret_inst  = func_info.new_value(program).store(value, retval);
+            let ret_inst = func_info.new_value(program).store(value, retval);
             func_info.push_inst(program, ret_inst);
         }
         None => {
@@ -316,19 +433,24 @@ pub fn assign_generate_program(program: &mut Program, scopes: &mut Scopes, lval:
     let lval_value = lval.generate_program(program, scopes).unwrap_int();
     let exp_value = exp.generate_program(program, scopes).unwrap_int();
     let func_info = scopes.get_current_func_mut().unwrap();
-    let ty1 = program.func(*func_info.get_func()).dfg().value(exp_value).kind();
-    let ty2 = program.func(*func_info.get_func()).dfg().value(lval_value).kind();
-    println!("Return Type: {:?} {:?}", ty1, ty2);
     let store_inst = func_info.new_value(program).store(exp_value, lval_value);
     func_info.push_inst(program, store_inst);
 }
 
-pub fn if_generate_program<'a>(cond: &Exp, true_br: &'a Box<Stmt>, false_br: &'a Option<Box<Stmt>>, program: &mut Program, scopes: &mut Scopes<'a>) {
+pub fn if_generate_program<'a>(
+    cond: &Exp,
+    true_br: &'a Box<Stmt>,
+    false_br: &'a Option<Box<Stmt>>,
+    program: &mut Program,
+    scopes: &mut Scopes<'a>,
+) {
     let cond_value = cond.generate_program(program, scopes).unwrap_int();
     let func_info = scopes.get_current_func_mut().unwrap();
     let true_block = func_info.new_bb_dfg(program, Some("%if_true"));
     let false_block = func_info.new_bb_dfg(program, Some("%if_false"));
-    let branch_inst = func_info.new_value(program).branch(cond_value, true_block, false_block);
+    let branch_inst = func_info
+        .new_value(program)
+        .branch(cond_value, true_block, false_block);
     func_info.push_inst(program, branch_inst);
 
     // 处理 true_block
@@ -352,7 +474,12 @@ pub fn if_generate_program<'a>(cond: &Exp, true_br: &'a Box<Stmt>, false_br: &'a
     func_info.push_block(program, end_block);
 }
 
-pub fn while_generate_program<'a>(cond: &Exp, body: &'a Stmt, program: &mut Program, scopes: &mut Scopes<'a>) {
+pub fn while_generate_program<'a>(
+    cond: &Exp,
+    body: &'a Stmt,
+    program: &mut Program,
+    scopes: &mut Scopes<'a>,
+) {
     let func_info = scopes.get_current_func_mut().unwrap();
     // 首先进入 entry block
     let entry_block = func_info.new_bb_dfg(program, Some("%while_entry"));
@@ -365,7 +492,9 @@ pub fn while_generate_program<'a>(cond: &Exp, body: &'a Stmt, program: &mut Prog
     let func_info = scopes.get_current_func_mut().unwrap();
     let body_block = func_info.new_bb_dfg(program, Some("%while_body"));
     let exit_block = func_info.new_bb_dfg(program, Some("%while_exit"));
-    let branch_inst = func_info.new_value(program).branch(cond_value, body_block, exit_block);
+    let branch_inst = func_info
+        .new_value(program)
+        .branch(cond_value, body_block, exit_block);
     func_info.push_inst(program, branch_inst);
 
     // 处理 body_block
@@ -376,11 +505,10 @@ pub fn while_generate_program<'a>(cond: &Exp, body: &'a Stmt, program: &mut Prog
     let func_info = scopes.get_current_func_mut().unwrap();
     let jump_inst = func_info.new_value(program).jump(entry_block);
     func_info.push_inst(program, jump_inst);
-    
+
     // 处理 exit_block
     func_info.push_block(program, exit_block);
 }
-
 
 impl Exp {
     pub fn generate_program(&self, program: &mut Program, scopes: &mut Scopes) -> ExpResult {
@@ -394,13 +522,23 @@ impl LOrExp {
             LOrExp::And(and_exp) => and_exp.generate_program(program, scopes).clone(),
             LOrExp::Or(left, _, right) => {
                 // 直接实现短路求值
-                let result = scopes.get_current_func().unwrap().new_value(program).alloc(Type::get_i32());
-                scopes.get_current_func_mut().unwrap().push_inst(program, result);
+                let result = scopes
+                    .get_current_func()
+                    .unwrap()
+                    .new_value(program)
+                    .alloc(Type::get_i32());
+                scopes
+                    .get_current_func_mut()
+                    .unwrap()
+                    .push_inst(program, result);
                 let left_value = left.generate_program(program, scopes).unwrap_int();
                 let func_info = scopes.get_current_func_mut().unwrap();
                 let zero = func_info.new_value(program).integer(0);
                 // 要把 left_value 和 zero 比较
-                let lhs_inst = func_info.new_value(program).binary(BinaryOp::NotEq, left_value, zero);
+                let lhs_inst =
+                    func_info
+                        .new_value(program)
+                        .binary(BinaryOp::NotEq, left_value, zero);
                 func_info.push_inst(program, lhs_inst);
                 // 把这个结果存到 result 中
                 let store_inst = func_info.new_value(program).store(lhs_inst, result);
@@ -411,13 +549,19 @@ impl LOrExp {
                 let exit_block = func_info.new_bb_dfg(program, Some("%or_end"));
                 // 如果 left_value == 0, 那么跳转到 right_block
                 // 否则跳转到 exit_block
-                let branch_inst = func_info.new_value(program).branch(lhs_inst, exit_block, right_block);
+                let branch_inst =
+                    func_info
+                        .new_value(program)
+                        .branch(lhs_inst, exit_block, right_block);
                 func_info.push_inst(program, branch_inst);
                 // 先处理 right_block
                 func_info.push_block(program, right_block);
                 let right_value = right.generate_program(program, scopes).unwrap_int();
                 let func_info = scopes.get_current_func_mut().unwrap();
-                let rhs_inst = func_info.new_value(program).binary(BinaryOp::NotEq, right_value, zero);
+                let rhs_inst =
+                    func_info
+                        .new_value(program)
+                        .binary(BinaryOp::NotEq, right_value, zero);
                 func_info.push_inst(program, rhs_inst);
                 // 把这个结果存到 result 中
                 let store_inst = func_info.new_value(program).store(rhs_inst, result);
@@ -441,13 +585,23 @@ impl LAndExp {
             LAndExp::Eq(eq_exp) => eq_exp.generate_program(program, scopes),
             LAndExp::And(left, _, right) => {
                 // 直接实现短路求值
-                let result = scopes.get_current_func().unwrap().new_value(program).alloc(Type::get_i32());
-                scopes.get_current_func_mut().unwrap().push_inst(program, result);
+                let result = scopes
+                    .get_current_func()
+                    .unwrap()
+                    .new_value(program)
+                    .alloc(Type::get_i32());
+                scopes
+                    .get_current_func_mut()
+                    .unwrap()
+                    .push_inst(program, result);
                 let left_value = left.generate_program(program, scopes).unwrap_int();
                 let func_info = scopes.get_current_func_mut().unwrap();
                 let zero = func_info.new_value(program).integer(0);
                 // 要把 left_value 和 zero 比较
-                let lhs_inst = func_info.new_value(program).binary(BinaryOp::NotEq, left_value, zero);
+                let lhs_inst =
+                    func_info
+                        .new_value(program)
+                        .binary(BinaryOp::NotEq, left_value, zero);
                 func_info.push_inst(program, lhs_inst);
                 // 把这个结果存到 result 中
                 let store_inst = func_info.new_value(program).store(lhs_inst, result);
@@ -458,13 +612,19 @@ impl LAndExp {
                 let exit_block = func_info.new_bb_dfg(program, Some("%and_end"));
                 // 如果 left_value == 0, 那么跳转到 exit_block
                 // 否则跳转到 right_block
-                let branch_inst = func_info.new_value(program).branch(lhs_inst, right_block, exit_block);
+                let branch_inst =
+                    func_info
+                        .new_value(program)
+                        .branch(lhs_inst, right_block, exit_block);
                 func_info.push_inst(program, branch_inst);
                 // 先处理 right_block
                 func_info.push_block(program, right_block);
                 let right_value = right.generate_program(program, scopes).unwrap_int();
                 let func_info = scopes.get_current_func_mut().unwrap();
-                let rhs_inst = func_info.new_value(program).binary(BinaryOp::NotEq, right_value, zero);
+                let rhs_inst =
+                    func_info
+                        .new_value(program)
+                        .binary(BinaryOp::NotEq, right_value, zero);
                 func_info.push_inst(program, rhs_inst);
                 // 把这个结果存到 result 中
                 let store_inst = func_info.new_value(program).store(rhs_inst, result);
@@ -496,7 +656,9 @@ impl EqExp {
                 let lhs_value = left_value.unwrap_int();
                 let rhs_value = right_value.unwrap_int();
                 let func_info = scopes.get_current_func_mut().unwrap();
-                let binary_inst = func_info.new_value(program).binary(binary_op, lhs_value, rhs_value);
+                let binary_inst = func_info
+                    .new_value(program)
+                    .binary(binary_op, lhs_value, rhs_value);
                 func_info.push_inst(program, binary_inst);
                 ExpResult::Int(binary_inst)
             }
@@ -520,7 +682,9 @@ impl RelExp {
                 let lhs_value = left_value.unwrap_int();
                 let rhs_value = right_value.unwrap_int();
                 let func_info = scopes.get_current_func_mut().unwrap();
-                let binary_inst = func_info.new_value(program).binary(binary_op, lhs_value, rhs_value);
+                let binary_inst = func_info
+                    .new_value(program)
+                    .binary(binary_op, lhs_value, rhs_value);
                 func_info.push_inst(program, binary_inst);
                 ExpResult::Int(binary_inst)
             }
@@ -542,7 +706,9 @@ impl AddExp {
                 let lhs_value = left_value.unwrap_int();
                 let rhs_value = right_value.unwrap_int();
                 let func_info = scopes.get_current_func_mut().unwrap();
-                let binary_inst = func_info.new_value(program).binary(binary_op, lhs_value, rhs_value);
+                let binary_inst = func_info
+                    .new_value(program)
+                    .binary(binary_op, lhs_value, rhs_value);
                 func_info.push_inst(program, binary_inst);
                 ExpResult::Int(binary_inst)
             }
@@ -565,14 +731,15 @@ impl MulExp {
                 let lhs_value = left_value.unwrap_int();
                 let rhs_value = right_value.unwrap_int();
                 let func_info = scopes.get_current_func_mut().unwrap();
-                let binary_inst = func_info.new_value(program).binary(binary_op, lhs_value, rhs_value);
+                let binary_inst = func_info
+                    .new_value(program)
+                    .binary(binary_op, lhs_value, rhs_value);
                 func_info.push_inst(program, binary_inst);
                 ExpResult::Int(binary_inst)
             }
         }
     }
 }
-
 
 impl UnaryExp {
     pub fn generate_program(&self, program: &mut Program, scopes: &mut Scopes) -> ExpResult {
@@ -586,13 +753,19 @@ impl UnaryExp {
                     UnaryOp::Pos => value,
                     UnaryOp::Neg => {
                         let zero = func_info.new_value(program).integer(0);
-                        let sub_inst = func_info.new_value(program).binary(BinaryOp::Sub, zero, int_value);
+                        let sub_inst =
+                            func_info
+                                .new_value(program)
+                                .binary(BinaryOp::Sub, zero, int_value);
                         func_info.push_inst(program, sub_inst);
                         ExpResult::Int(sub_inst)
                     }
                     UnaryOp::Not => {
                         let zero = func_info.new_value(program).integer(0);
-                        let not_inst = func_info.new_value(program).binary(BinaryOp::Eq, int_value, zero);
+                        let not_inst =
+                            func_info
+                                .new_value(program)
+                                .binary(BinaryOp::Eq, int_value, zero);
                         func_info.push_inst(program, not_inst);
                         ExpResult::Int(not_inst)
                     }
@@ -605,6 +778,7 @@ impl UnaryExp {
                         params.push(arg.generate_program(program, scopes).unwrap_int());
                     }
                 }
+                println!("Call: {}", ident);
                 let callee = *scopes.get_func(ident).unwrap();
                 let func_info = scopes.get_current_func_mut().unwrap();
                 let call_inst = func_info.new_value(program).call(callee, params);
@@ -621,11 +795,28 @@ impl PrimaryExp {
             PrimaryExp::LVal(lval) => {
                 // Load the alloc value
                 let value = lval.generate_program(program, scopes).unwrap_int();
-                let ty = program.func(*scopes.get_current_func().unwrap().get_func()).dfg().value(value).kind();
+                if scopes.is_global_scope() {
+                    return ExpResult::Int(value);
+                }
+                
+                
+                let ty: &ValueKind; 
+                if value.is_global() {
+                    let func_info = scopes.get_current_func_mut().unwrap();
+                    let load_inst = func_info
+                        .new_value(program)
+                        .load(value);
+                    func_info.push_inst(program, load_inst);
+                    return ExpResult::Int(load_inst);
+                } else {
+                    ty = program
+                        .func(*scopes.get_current_func().unwrap().get_func())
+                        .dfg()
+                        .value(value)
+                        .kind();
+                };
                 match ty {
-                    ValueKind::Integer(_) => {
-                        ExpResult::Int(value)
-                    }
+                    ValueKind::Integer(_) => ExpResult::Int(value),
                     _ => {
                         let func_info = scopes.get_current_func_mut().unwrap();
                         let load_inst = func_info.new_value(program).load(value);
@@ -634,14 +825,19 @@ impl PrimaryExp {
                     }
                 }
             }
-            
-            PrimaryExp::Number(x) => ExpResult::Int(
-                scopes.get_current_func_mut().unwrap().new_value(program).integer(*x)
-            ),
+
+            PrimaryExp::Number(x) => ExpResult::Int(if scopes.is_global_scope() {
+                program.new_value().integer(*x)
+            } else {
+                scopes
+                    .get_current_func_mut()
+                    .unwrap()
+                    .new_value(program)
+                    .integer(*x)
+            }),
             PrimaryExp::Exp(exp) => exp.generate_program(program, scopes),
         }
     }
-    
 }
 
 impl LVal {
@@ -649,6 +845,9 @@ impl LVal {
         let var_value = scopes.get_value(&self.ident).cloned();
         match var_value {
             Some(VarValue::Const(x)) => {
+                if scopes.is_global_scope() {
+                    return ExpResult::Int(program.new_value().integer(x));
+                }
                 let func_info = scopes.get_current_func_mut().unwrap();
                 ExpResult::Int(func_info.new_value(program).integer(x))
             }
@@ -657,9 +856,7 @@ impl LVal {
                 // 我得到的是一个 alloc
                 ExpResult::Int(value)
             }
-            _ => {
-                ExpResult::Void
-            }
+            _ => ExpResult::Void,
         }
     }
 }
@@ -667,9 +864,7 @@ impl LVal {
 impl InitVal {
     pub fn generate_program(&self, program: &mut Program, scopes: &mut Scopes) -> Option<Value> {
         match self {
-            InitVal::Exp(exp) => {
-                Some(exp.generate_program(program, scopes).unwrap_int())
-            }
+            InitVal::Exp(exp) => Some(exp.generate_program(program, scopes).unwrap_int()),
             InitVal::Array(_array) => {
                 // 暂时先不处理数组
                 None

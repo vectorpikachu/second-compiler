@@ -1,41 +1,95 @@
-fun @add(%0: i32, %1: i32): i32 {
+global @a = alloc i32, 30
+
+decl @getint(): i32
+
+decl @getch(): i32
+
+decl @getint_0(*i32): i32
+
+decl @putint(i32)
+
+decl @putch(i32)
+
+decl @putarray(i32, *i32)
+
+decl @starttime()
+
+decl @stoptime()
+
+fun @inc(): i32 {
 %entry:
   %retval = alloc i32
-  @a = alloc i32
-  @b = alloc i32
-  jump %2
+  jump %0
 
-%2:
-  store %0, @a
-  store %1, @b
+%0:
+  %1 = load @a
+  %2 = add %1, 1
+  store %2, @a
   %3 = load @a
-  %4 = load @b
-  %5 = add %3, %4
-  store %5, %retval
+  store %3, %retval
   jump %exit
 
-%6:
+%4:
   jump %exit
 
 %exit:
-  %7 = load %retval
-  ret %7
+  %5 = load %retval
+  ret %5
+}
+
+fun @print_a() {
+%entry:
+  jump %6
+
+%6:
+  %7 = load @a
+  call @putint(%7)
+  call @putch(10)
+  jump %exit
+
+%exit:
+  ret
 }
 
 fun @main(): i32 {
 %entry:
   %retval = alloc i32
+  @i = alloc i32
+  @a_0 = alloc i32
   jump %8
 
 %8:
-  %9 = call @add(1, 2)
-  store %9, %retval
+  store 0, @i
+  jump %while_entry
+
+%while_entry:
+  %9 = load @i
+  %10 = lt %9, 10
+  br %10, %while_body, %while_exit
+
+%while_body:
+  %11 = call @inc()
+  store 1, @a_0
+  %12 = load @a_0
+  %13 = add %12, 2
+  store %13, @a_0
+  %14 = load @a_0
+  call @putint(%14)
+  call @putch(10)
+  call @print_a()
+  %15 = load @i
+  %16 = add %15, 1
+  store %16, @i
+  jump %while_entry
+
+%while_exit:
+  store 0, %retval
   jump %exit
 
-%10:
+%17:
   jump %exit
 
 %exit:
-  %11 = load %retval
-  ret %11
+  %18 = load %retval
+  ret %18
 }

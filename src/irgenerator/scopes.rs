@@ -71,11 +71,6 @@ impl<'a> Scopes<'a> {
         self.current_func = Some(func);
     }
 
-    /// 得到当前的循环
-    pub fn get_current_loop(&self) -> Option<&(BasicBlock, BasicBlock)> {
-        self.loop_stack.last()
-    }
-
     pub fn get_current_loop_mut(&mut self) -> Option<&(BasicBlock, BasicBlock)> {
         self.loop_stack.last()
     }
