@@ -1,11 +1,15 @@
 //! 生成内存形式的IR代码
 
+
 use koopa::ir::{
-    builder::{BasicBlockBuilder, GlobalInstBuilder, LocalInstBuilder, ValueBuilder},
-    BinaryOp, FunctionData, Program, Type, Value, ValueKind,
+    builder::{BasicBlockBuilder, GlobalInstBuilder, LocalInstBuilder, ValueBuilder}, BinaryOp, FunctionData, Program, Type, TypeKind, Value, ValueKind
 };
 
-use super::{expression::ExpResult, function_info::FunctionInfo, scopes::*};
+use super::{
+    expression::ExpResult,
+    function_info::FunctionInfo,
+    scopes::*,
+};
 use crate::ast::*;
 
 impl CompUnit {
@@ -101,8 +105,9 @@ impl Decl {
 
 impl ConstDecl {
     pub fn generate_program<'a>(&'a self, program: &mut Program, scopes: &mut Scopes<'a>) {
-        // 现阶段都是int类型的常量
+        // 现阶段都是int类型的常量 + int 类型的数组等.
         // self.ty = BType::Int;
+        println!("self.ty: {:?}", self.ty);
         for def in &self.defs {
             def.generate_program(program, scopes);
         }
@@ -116,67 +121,147 @@ impl ConstDef {
         // 暂时先不处理
         // 我们可以先不填充, 等到把evaluate完了之后再填充
         // 要先通过 array_index 确定这个常量的类型
-        let ty = match self.array_index.len() {
-            0 => Type::get_i32(),
-            _ => {
-                let mut ty = Type::get_i32();
-                for _ in &self.array_index {
-                    ty = Type::get_pointer(ty);
+        let ty = get_type(&self.array_index, scopes);
+        let init_val = self.init_val.generate_program(program, scopes, &ty);
+
+        if ty.is_i32() {
+            // 当前的 ConstDef 是一个 int 类型的常量
+            match init_val {
+                VarValue::Const(int_num) => {
+                    scopes.set_value(&self.ident, VarValue::Const(int_num));
                 }
-                ty
+                _ => unreachable!(),
             }
-        };
-
-        let index = self.array_index.iter().map(|exp| exp.evaluate(scopes)).collect();
-        let value = self.init_val.generate_program(program, scopes, index, 0);
-        let init_val = match value {
-            VarValue::Const(val) => program.new_value().integer(val),
-            VarValue::Value(value) => value,
-        };
-
-        if scopes.is_global_scope() {
-            
-            let global_value = program.new_value().global_alloc(init_val);
-            program.set_value_name(global_value, Some(format!("@{}", self.ident)));
         } else {
-            let func_info = scopes.get_current_func_mut().unwrap();
-            let value = func_info.new_alloc_entry(program, ty, Some(&self.ident));
-            // TODO: Getelementptr.
+            // 是一个数组
+            let real_val = match init_val {
+                VarValue::Value(value) => value,
+                _ => unreachable!(),
+            };
+            if scopes.is_global_scope() {
+                let global_value = program.new_value().global_alloc(real_val);
+                program.set_value_name(global_value, Some(format!("@{}", self.ident)));
+                scopes.set_value(&self.ident, VarValue::Value(global_value));
+            } else {
+                let func_info = scopes.get_current_func_mut().unwrap();
+                let alloc_inst = func_info.new_alloc_entry(program, ty, Some(&self.ident));
+                println!("You are the one to blame.");
+                generate_store_inst(program, scopes, &self.ident, real_val, alloc_inst);
+                scopes.set_value(&self.ident, VarValue::Value(alloc_inst));
+            }
+        }
+    }
+}
+
+pub fn get_type(array_index: &Vec<ConstExp>, scopes: &mut Scopes) -> Type {
+    let mut ty = Type::get_i32();
+    for index in array_index.iter().rev() {
+        let value = index.evaluate(scopes);
+        ty = Type::get_array(ty, value as usize);
+    }
+    ty
+}
+
+pub fn generate_store_inst(
+    program: &mut Program,
+    scopes: &Scopes,
+    ident: &str,
+    real_val: Value,
+    alloc_inst: Value,
+) {
+    // 其实不一定哪里都要加mut的
+    let func_info = scopes.get_current_func().unwrap();
+    println!("This is very great, and I like it.");
+    let value_kind = func_info.get_local_valuekind(program, real_val);
+    println!("FUCK YOU?");
+    match value_kind {
+        ValueKind::Integer(_) => {
+            println!("I get into int. Aloha!");
+            let store_inst = func_info.new_value(program).store(
+                real_val,
+                alloc_inst,
+            );
+            println!("Is this a bitch?");
             func_info.push_inst(program, store_inst);
         }
-        scopes.set_value(&self.ident, value);
+        ValueKind::Aggregate(array) => {
+            println!("Danke! Tschüss");
+            for (index, value) in array.elems().iter().enumerate() {
+                let index_value = func_info.new_value(program).integer(index as i32);
+                let pointer_inst = func_info.new_value(program).get_elem_ptr(alloc_inst, index_value);
+                func_info.push_inst(program, pointer_inst);
+                println!("Here is an array: {:?}", alloc_inst);
+                generate_store_inst(program, scopes, ident, *value, pointer_inst);
+            }
+        }
+        _ => unreachable!(),
+    }
+}
+
+pub fn get_temporary_value_int(program: &mut Program, scopes: &Scopes, num: i32) -> Value {
+    if scopes.is_global_scope() {
+        program.new_value().integer(num)
+    } else {
+        let func_info = scopes.get_current_func().unwrap();
+        func_info.new_value(program).integer(num)
+    }
+}
+
+pub fn get_temporary_value_array(program: &mut Program, scopes: &Scopes, values: Vec<Value>) -> Value {
+    if scopes.is_global_scope() {
+        program.new_value().aggregate(values)
+    } else {
+        let func_info = scopes.get_current_func().unwrap();
+        func_info.new_value(program).aggregate(values)
     }
 }
 
 impl ConstInitVal {
-    pub fn generate_program(&self, program: &mut Program, scopes: &mut Scopes, index: &Vec<i32>, x: usize) -> VarValue {
+    pub fn generate_program(&self, program: &mut Program, scopes: &mut Scopes, ty: &Type) -> VarValue {
         match self {
             ConstInitVal::Exp(exp) => VarValue::Const(exp.evaluate(scopes)),
             ConstInitVal::Array(array) => {
                 let mut values = Vec::new();
-                let k = *index.get(x).unwrap();
-                let mut cur = 0;
+                // 把所有的值都填充进去
+                let (base, len) = match ty.kind() {
+                    TypeKind::Array(base, len) => (base, len),
+                    _ => unreachable!()
+                };
+                let mut count: usize = 0;
                 for val in array {
-                    cur += 1;
-                    let val = val.generate_program(program, scopes, index, x + 1);
-                    match val {
-                        VarValue::Const(val) => {
-                            let int_val = program.new_value().integer(val);
-                            values.push(int_val);
+                    let var_value = val.generate_program(program, scopes, base);
+                    match var_value {
+                        VarValue::Const(int_num) => {
+                            values.push(get_temporary_value_int(program, scopes, int_num));
                         }
                         VarValue::Value(value) => {
                             values.push(value);
                         }
                     }
+                    count = count + 1;
                 }
-                for _ in cur..k {
-                    let zero = program.new_value().integer(0);
-                    values.push(zero);
+                // 如果没有填满, 那么就要填充0
+                for _ in count..*len {
+                    values.push(get_zero(program, scopes, base));
                 }
-                let value = program.new_value().aggregate(values);
-                VarValue::Value(value)
+                let array_value = get_temporary_value_array(program, scopes, values);
+                VarValue::Value(array_value)
             }
         }
+    }
+}
+
+pub fn get_zero(program: &mut Program, scopes: &Scopes, ty: &Type) -> Value {
+    match ty.kind() {
+        TypeKind::Int32 => get_temporary_value_int(program, scopes, 0),
+        TypeKind::Array(base, len) => {
+            let mut values = Vec::new();
+            for _ in 0..*len {
+                values.push(get_zero(program, scopes, base));
+            }
+            get_temporary_value_array(program, scopes, values)
+        }
+        _ => unreachable!(),
     }
 }
 
@@ -834,14 +919,11 @@ impl PrimaryExp {
                 if scopes.is_global_scope() {
                     return ExpResult::Int(value);
                 }
-                
-                
-                let ty: &ValueKind; 
+
+                let ty: &ValueKind;
                 if value.is_global() {
                     let func_info = scopes.get_current_func_mut().unwrap();
-                    let load_inst = func_info
-                        .new_value(program)
-                        .load(value);
+                    let load_inst = func_info.new_value(program).load(value);
                     func_info.push_inst(program, load_inst);
                     return ExpResult::Int(load_inst);
                 } else {

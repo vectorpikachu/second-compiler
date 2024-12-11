@@ -1,3 +1,5 @@
+global @x = alloc [i32, 2], {10, 20}
+
 decl @getint(): i32
 
 decl @getch(): i32
@@ -14,140 +16,31 @@ decl @starttime()
 
 decl @stoptime()
 
-fun @func(%0: i32): i32 {
+fun @main(): i32 {
 %entry:
   %retval = alloc i32
-  @n = alloc i32
-  jump %1
+  @arr = alloc [i32, 5]
+  jump %0
 
-%1:
-  store %0, @n
-  %2 = load @n
-  %3 = le %2, 50
-  br %3, %if_true, %if_false
-
-%if_true:
-  %4 = load @n
-  call @putint(%4)
-  store 1, %retval
-  jump %exit
-
-%5:
-  jump %if_end
-
-%if_false:
-  %6 = load @n
-  call @putint(%6)
-  store 0, %retval
+%0:
+  %1 = getelemptr @arr, 0
+  store 1, %1
+  %2 = getelemptr @arr, 1
+  store 2, %2
+  %3 = getelemptr @arr, 2
+  store 3, %3
+  %4 = getelemptr @arr, 3
+  store 0, %4
+  %5 = getelemptr @arr, 4
+  store 0, %5
+  %6 = add 6, 5
+  store %6, %retval
   jump %exit
 
 %7:
-  jump %if_end
-
-%if_end:
   jump %exit
 
 %exit:
   %8 = load %retval
   ret %8
-}
-
-fun @main(): i32 {
-%entry:
-  %retval = alloc i32
-  @i = alloc i32
-  jump %9
-
-%9:
-  %10 = alloc i32
-  %11 = call @func(0)
-  %12 = eq %11, 1
-  %13 = ne %12, 0
-  store %13, %10
-  br %13, %or_end, %or_false
-
-%or_false:
-  %14 = alloc i32
-  %15 = call @func(50)
-  %16 = eq %15, 1
-  %17 = ne %16, 0
-  store %17, %14
-  br %17, %and_true, %and_end
-
-%and_true:
-  %18 = call @func(100)
-  %19 = eq %18, 0
-  %20 = ne %19, 0
-  store %20, %14
-  jump %and_end
-
-%and_end:
-  %21 = load %14
-  %22 = ne %21, 0
-  store %22, %10
-  jump %or_end
-
-%or_end:
-  %23 = load %10
-  br %23, %if_true, %if_false
-
-%if_true:
-  store 0, @i
-  jump %if_end
-
-%if_false:
-  store 1, @i
-  jump %if_end
-
-%if_end:
-  %24 = alloc i32
-  %25 = alloc i32
-  %26 = call @func(50)
-  %27 = eq %26, 1
-  %28 = ne %27, 0
-  store %28, %25
-  br %28, %and_true_0, %and_end_0
-
-%and_true_0:
-  %29 = call @func(40)
-  %30 = eq %29, 1
-  %31 = ne %30, 0
-  store %31, %25
-  jump %and_end_0
-
-%and_end_0:
-  %32 = load %25
-  %33 = ne %32, 0
-  store %33, %24
-  br %33, %or_end_0, %or_false_0
-
-%or_false_0:
-  %34 = call @func(1)
-  %35 = eq %34, 1
-  %36 = ne %35, 0
-  store %36, %24
-  jump %or_end_0
-
-%or_end_0:
-  %37 = load %24
-  br %37, %if_true_0, %if_false_0
-
-%if_true_0:
-  store 0, @i
-  jump %if_end_0
-
-%if_false_0:
-  store 1, @i
-  jump %if_end_0
-
-%if_end_0:
-  store 0, %retval
-  jump %exit
-
-%38:
-  jump %exit
-
-%exit:
-  %39 = load %retval
-  ret %39
 }
