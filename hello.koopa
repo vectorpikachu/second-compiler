@@ -19,10 +19,13 @@ decl @stoptime()
 fun @main(): i32 {
 %entry:
   %retval = alloc i32
+  @x_0 = alloc i32
   @arr = alloc [i32, 5]
+  @a = alloc [[i32, 2], 2]
   jump %0
 
 %0:
+  store 5, @x_0
   %1 = getelemptr @arr, 0
   store 1, %1
   %2 = getelemptr @arr, 1
@@ -33,14 +36,24 @@ fun @main(): i32 {
   store 0, %4
   %5 = getelemptr @arr, 4
   store 0, %5
-  %6 = add 6, 5
-  store %6, %retval
+  %6 = getelemptr @a, 0
+  %7 = getelemptr %6, 0
+  store 1, %7
+  %8 = getelemptr %6, 1
+  store 2, %8
+  %9 = getelemptr @a, 1
+  %10 = getelemptr %9, 0
+  store 3, %10
+  %11 = getelemptr %9, 1
+  store 5, %11
+  %12 = add 6, 5
+  store %12, %retval
   jump %exit
 
-%7:
+%13:
   jump %exit
 
 %exit:
-  %8 = load %retval
-  ret %8
+  %14 = load %retval
+  ret %14
 }
