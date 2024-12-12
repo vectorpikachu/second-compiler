@@ -9,12 +9,14 @@ use super::scopes::*;
 pub enum ExpResult {
     Void,
     Int(Value),
+    ArrayPtr(Value)
 }
 
 impl ExpResult {
     pub fn unwrap_int(&self) -> Value {
         match self {
             ExpResult::Int(value) => *value,
+            ExpResult::ArrayPtr(p) => *p,
             _ => unimplemented!(),
         }
     }

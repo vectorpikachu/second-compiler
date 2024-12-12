@@ -13,7 +13,14 @@ pub enum VarValue {
     Const(i32), // 一个常量
 }
 
-
+impl VarValue {
+    pub fn is_const(&self) -> bool {
+        match self {
+            VarValue::Const(_) => true,
+            _ => false,
+        }
+    }
+}
 
 /// 当前的作用域
 pub struct Scopes<'a> {
