@@ -1,7 +1,7 @@
 //! 用来记录当前的函数的信息
 
 use koopa::ir::{
-    builder::{BasicBlockBuilder, LocalBuilder, LocalInstBuilder}, BasicBlock, Function, Program, Type, Value, ValueKind
+    builder::{BasicBlockBuilder, LocalBuilder, LocalInstBuilder}, BasicBlock, Function, Program, Type, Value
 };
 
 pub struct FunctionInfo {
@@ -131,11 +131,6 @@ impl FunctionInfo {
         }
         self.push_inst_to(program, alloc, self.entry_block);
         alloc
-    }
-
-    /// 得到当前函数里的一个变量的类型
-    pub fn get_local_valuekind(&self, program: &mut Program, local: Value) -> ValueKind {
-        program.func(self.func).dfg().value(local).kind().clone()
     }
 
 }

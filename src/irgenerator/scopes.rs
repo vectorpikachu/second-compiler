@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use koopa::ir::{BasicBlock, Function, Value};
+use koopa::ir::{BasicBlock, Function, Program, TypeKind, Value};
 
 use super::function_info::FunctionInfo;
 
@@ -13,14 +13,6 @@ pub enum VarValue {
     Const(i32), // 一个常量
 }
 
-impl VarValue {
-    pub fn is_const(&self) -> bool {
-        match self {
-            VarValue::Const(_) => true,
-            _ => false,
-        }
-    }
-}
 
 /// 当前的作用域
 pub struct Scopes<'a> {
@@ -109,4 +101,12 @@ impl<'a> Scopes<'a> {
         self.funcs.insert(name, func);
     }
 
+    /// 得到当前的变量的 TypeKind
+    pub fn get_var_typekind(&self, val: &Value, program: &Program) -> TypeKind {
+        if val.is_global() {
+            program.borrow_value(*val).ty().kind().clone()
+        } else {
+            program.func(*self.current_func.as_ref().unwrap().get_func()).dfg().value(*val).ty().kind().clone()
+        }
+    } 
 }

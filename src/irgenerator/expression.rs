@@ -1,6 +1,6 @@
 //! 表达式求值
 
-use koopa::ir::Value;
+use koopa::ir::{builder::LocalInstBuilder, Program, Value};
 
 use crate::ast::*;
 use super::scopes::*;
@@ -9,17 +9,48 @@ use super::scopes::*;
 pub enum ExpResult {
     Void,
     Int(Value),
+    IntPtr(Value),
     ArrayPtr(Value)
 }
 
 impl ExpResult {
-    pub fn unwrap_int(&self) -> Value {
+    /// for params and args.
+    pub fn unwrap_val(&self, program: &mut Program, scopes: &Scopes) -> Value {
         match self {
             ExpResult::Int(value) => *value,
+            ExpResult::IntPtr(p) => {
+                let func_info = scopes.get_current_func().unwrap();
+                let load_inst = func_info.new_value(program).load(*p);
+                func_info.push_inst(program, load_inst);
+                load_inst
+            }
             ExpResult::ArrayPtr(p) => *p,
             _ => unimplemented!(),
         }
     }
+
+    /// for exp calc.
+    pub fn unwrap_int(&self, program: &mut Program, scopes: &Scopes) -> Value {
+        match self {
+            ExpResult::Int(value) => *value,
+            ExpResult::IntPtr(p) => {
+                let func_info = scopes.get_current_func().unwrap();
+                let load_inst = func_info.new_value(program).load(*p);
+                func_info.push_inst(program, load_inst);
+                load_inst
+            }
+            _ => unimplemented!(),
+        }
+    }
+
+    /// For assgn.
+    pub fn unwrap_int_ptr(&self) -> Value {
+        match self {
+            ExpResult::IntPtr(p) => *p,
+            _ => unimplemented!(),
+        }
+    }
+    
 }
 
 impl ConstExp {
@@ -213,14 +244,3 @@ impl LVal {
     }
 }
 
-/// 只是对于单个的表达式求值
-impl InitVal {
-    pub fn evaluate(&self, scopes: &Scopes) -> i32 {
-        match self {
-            InitVal::Exp(exp) => exp.evaluate(scopes),
-            _ => {
-                unimplemented!()
-            }
-        }
-    }
-}

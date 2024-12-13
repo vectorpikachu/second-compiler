@@ -2,7 +2,7 @@
 
 use koopa::ir::{
     builder::{BasicBlockBuilder, GlobalInstBuilder, LocalInstBuilder, ValueBuilder},
-    BinaryOp, FunctionData, Program, Type, TypeKind, Value, ValueKind,
+    BinaryOp, FunctionData, Program, Type, TypeKind, Value,
 };
 
 use super::{expression::ExpResult, function_info::FunctionInfo, scopes::*};
@@ -30,7 +30,7 @@ impl CompUnit {
         scopes.add_func(
             "getarray",
             program.new_func(FunctionData::new_decl(
-                "@getint".to_string(),
+                "@getarray".to_string(),
                 vec![Type::get_pointer(Type::get_i32())],
                 Type::get_i32(),
             )),
@@ -116,30 +116,28 @@ impl ConstDef {
         // 在 init_val 生成程序的过程中就进行填充
         // 要先通过 array_index 确定这个常量的类型
         let ty = get_type(&self.array_index, scopes);
-        let init_val = self.init_val.generate_program(program, scopes, &ty);
+        let init_val = self.init_val.generate_program(program, scopes);
+        let reshaped = init_val.reshape(&mut ty.clone());
 
         if ty.is_i32() {
             // 当前的 ConstDef 是一个 int 类型的常量
-            match init_val {
-                VarValue::Const(int_num) => {
+            match reshaped {
+                InitializedValue::Const(int_num) => {
                     scopes.set_value(&self.ident, VarValue::Const(int_num));
                 }
                 _ => unreachable!(),
             }
         } else {
             // 是一个数组
-            let real_val = match init_val {
-                VarValue::Value(value) => value,
-                _ => unreachable!(),
-            };
             if scopes.is_global_scope() {
-                let global_value = program.new_value().global_alloc(real_val);
+                let const_val = reshaped.to_const(program, scopes); // 给每一个元素都常量求值
+                let global_value = program.new_value().global_alloc(const_val);
                 program.set_value_name(global_value, Some(format!("@{}", self.ident)));
                 scopes.set_value(&self.ident, VarValue::Value(global_value));
             } else {
                 let func_info = scopes.get_current_func_mut().unwrap();
                 let alloc_inst = func_info.new_alloc_entry(program, ty, Some(&self.ident));
-                generate_store_inst(program, scopes, &self.ident, real_val, alloc_inst);
+                reshaped.generate_store_inst(program, scopes, alloc_inst);
                 scopes.set_value(&self.ident, VarValue::Value(alloc_inst));
             }
         }
@@ -153,37 +151,6 @@ pub fn get_type(array_index: &Vec<ConstExp>, scopes: &mut Scopes) -> Type {
         ty = Type::get_array(ty, value as usize);
     }
     ty
-}
-
-
-/// 生成 store 指令
-pub fn generate_store_inst(
-    program: &mut Program,
-    scopes: &Scopes,
-    ident: &str,
-    real_val: Value,
-    alloc_inst: Value,
-) {
-    // 其实不一定哪里都要加mut的
-    let func_info = scopes.get_current_func().unwrap();
-    let value_kind = func_info.get_local_valuekind(program, real_val);
-    match value_kind {
-        ValueKind::Integer(_) => {
-            let store_inst = func_info.new_value(program).store(real_val, alloc_inst);
-            func_info.push_inst(program, store_inst);
-        }
-        ValueKind::Aggregate(array) => {
-            for (index, value) in array.elems().iter().enumerate() {
-                let index_value = func_info.new_value(program).integer(index as i32);
-                let pointer_inst = func_info
-                    .new_value(program)
-                    .get_elem_ptr(alloc_inst, index_value);
-                func_info.push_inst(program, pointer_inst);
-                generate_store_inst(program, scopes, ident, *value, pointer_inst);
-            }
-        }
-        _ => unreachable!(),
-    }
 }
 
 pub fn get_temporary_value_int(program: &mut Program, scopes: &Scopes, num: i32) -> Value {
@@ -213,55 +180,21 @@ impl ConstInitVal {
         &self,
         program: &mut Program,
         scopes: &mut Scopes,
-        ty: &Type,
-    ) -> VarValue {
+    ) -> InitializedValue {
         match self {
-            ConstInitVal::Exp(exp) => VarValue::Const(exp.evaluate(scopes)),
+            ConstInitVal::Exp(exp) => InitializedValue::Const(exp.evaluate(scopes)),
             ConstInitVal::Array(array) => {
                 let mut values = Vec::new();
-                // 把所有的值都填充进去
-                let (base, len) = match ty.kind() {
-                    TypeKind::Array(base, len) => (base, len),
-                    _ => unreachable!(),
-                };
-                let mut count: usize = 0;
-                for val in array {
-                    let var_value = val.generate_program(program, scopes, base);
-                    match var_value {
-                        VarValue::Const(int_num) => {
-                            values.push(get_temporary_value_int(program, scopes, int_num));
-                        }
-                        VarValue::Value(value) => {
-                            values.push(value);
-                        }
-                    }
-                    count = count + 1;
+                for init_val in array {
+                    let value = init_val.generate_program(program, scopes);
+                    values.push(value);
                 }
-                // 如果没有填满, 那么就要填充0
-                for _ in count..*len {
-                    values.push(get_zero(program, scopes, base));
-                }
-                let array_value = get_temporary_value_array(program, scopes, values);
-                VarValue::Value(array_value)
+                InitializedValue::Array(values)
             }
         }
     }
 }
 
-/// 返回一个当前类型的0值
-pub fn get_zero(program: &mut Program, scopes: &Scopes, ty: &Type) -> Value {
-    match ty.kind() {
-        TypeKind::Int32 => get_temporary_value_int(program, scopes, 0),
-        TypeKind::Array(base, len) => {
-            let mut values = Vec::new();
-            for _ in 0..*len {
-                values.push(get_zero(program, scopes, base));
-            }
-            get_temporary_value_array(program, scopes, values)
-        }
-        _ => unreachable!(),
-    }
-}
 
 impl VarDecl {
     pub fn generate_program<'a>(&'a self, program: &mut Program, scopes: &mut Scopes<'a>) {
@@ -277,7 +210,6 @@ impl VarDef {
         // 此时应该处理数组的情况
         println!("VarDef: {}", self.ident);
         let ty = get_type(&self.array_index, scopes);
-        let reshaped = reshape_ty(&ty);
         /*
          * 根据是否是全局变量, 生成不同的代码
          */
@@ -285,24 +217,10 @@ impl VarDef {
             match self.init_val {
                 Some(ref init_val) => {
                     // 全局变量的初始化必须也是常量
-                    let real_val = if ty.is_i32() {
-                        let value = init_val.evaluate(scopes);
-                        let val = program.new_value().integer(value);
-                        val
-                    } else {
-                        // 数组
-                        let value = init_val.to_const(program, scopes, &ty, &reshaped);
-                        let val = match value {
-                            VarValue::Const(int_num) => {
-                                // 其实没有必要
-                                let val = program.new_value().integer(int_num);
-                                val
-                            }
-                            VarValue::Value(value) => value,
-                        };
-                        val
-                    };
-                    let global_value = program.new_value().global_alloc(real_val);
+                    let real_val = init_val.generate_program(program, scopes);
+                    let reshaped = real_val.reshape(&mut ty.clone());
+                    let value = reshaped.to_const(program, scopes);
+                    let global_value = program.new_value().global_alloc(value);
                     program.set_value_name(global_value, Some(format!("@{}", self.ident)));
                     scopes.set_value(&self.ident, VarValue::Value(global_value));
                 }
@@ -317,25 +235,19 @@ impl VarDef {
             return;
         }
         // 生成一个alloc指令
-        let value =
-            scopes
-                .get_current_func_mut()
-                .unwrap()
-                .new_alloc_entry(program, ty.clone(), Some(&self.ident));
+        let value = scopes.get_current_func_mut().unwrap().new_alloc_entry(
+            program,
+            ty.clone(),
+            Some(&self.ident),
+        );
         // 即使是局部变量的数组, 也要补0 + 初始化
-        
-        let real_val = match self.init_val {
-            Some(ref init_val) => {
-                // 加入数组
-                let init_value = init_val.generate_program(program, scopes, &ty);
-                init_value
-            }
-            None => {
-                InitializedValue::get_zero(program, scopes, &ty)
-            }
-        };
 
-        real_val.generate_store_inst(program, scopes, value);
+        if let Some(init) = &self.init_val {
+            let real_val = init.generate_program(program, scopes);
+            let reshaped = real_val.reshape(&mut ty.clone());
+            reshaped.generate_store_inst(program, scopes, value);
+        }
+
         scopes.set_value(&self.ident, VarValue::Value(value));
     }
 }
@@ -349,6 +261,7 @@ impl FuncDef {
          * 每个 block 之间通过 jump 连接
          * 所有的返回值都首先被分配到一个堆的变量 %retval 里
          */
+        println!("FuncDef: {}", self.ident);
         let func_ty = self.ty.generate_program(program, scopes);
         // 现阶段所有的参数都是 int 类型的
         let mut params_ty: Vec<Type> = Vec::new();
@@ -356,7 +269,8 @@ impl FuncDef {
             // 直接把所有的参数类型放到 params_ty 中
             params.get_type(&mut params_ty, scopes);
         }
-        let mut func_data = FunctionData::new(format!("@{}", self.ident), params_ty.clone(), func_ty);
+        let mut func_data =
+            FunctionData::new(format!("@{}", self.ident), params_ty.clone(), func_ty);
 
         // 接下来, 生成函数的入口块
         let entry_block = func_data
@@ -398,7 +312,13 @@ impl FuncDef {
         scopes.enter_scope();
         if let Some(params) = &self.params {
             let formal_params = program.func(func).params().to_vec();
-            params.generate_program(program, scopes, &params_ty, &mut function_info, &formal_params);
+            params.generate_program(
+                program,
+                scopes,
+                &params_ty,
+                &mut function_info,
+                &formal_params,
+            );
         }
         // 我们创建了这个函数的作用域, 应当把它的名字等放入
         scopes.add_func(&self.ident, func);
@@ -435,7 +355,9 @@ impl FuncFParams {
         func: &mut FunctionInfo,
         formal_params: &Vec<Value>,
     ) {
-        for ((param, param_ty), formal_param) in self.params.iter().zip(params_ty).zip(formal_params) {
+        for ((param, param_ty), formal_param) in
+            self.params.iter().zip(params_ty).zip(formal_params)
+        {
             param.generate_program(program, scopes, func, param_ty.clone(), formal_param);
         }
     }
@@ -454,7 +376,7 @@ impl FuncFParam {
         scopes: &mut Scopes<'a>,
         func: &mut FunctionInfo,
         ty: Type,
-        formal_param: &Value
+        formal_param: &Value,
     ) {
         // 现阶段所有的参数都是 int 类型的
         let alloc_value = func.new_alloc_entry(program, ty, Some(&self.ident));
@@ -559,7 +481,7 @@ pub fn return_generate_program<'a>(
 ) {
     match ret_val {
         Some(exp) => {
-            let value = exp.generate_program(program, scopes).unwrap_int();
+            let value = exp.generate_program(program, scopes).unwrap_int(program, scopes);
             let func_info = scopes.get_current_func_mut().unwrap();
             let retval = func_info.get_return_value().unwrap();
             let ret_inst = func_info.new_value(program).store(value, retval);
@@ -581,9 +503,14 @@ pub fn return_generate_program<'a>(
 }
 
 pub fn assign_generate_program(program: &mut Program, scopes: &mut Scopes, lval: &LVal, exp: &Exp) {
-    let lval_value = lval.generate_program(program, scopes).unwrap_int();
-    let exp_value = exp.generate_program(program, scopes).unwrap_int();
-    let func_info = scopes.get_current_func_mut().unwrap();
+    println!("Assgn {} {:?} = {:?}", lval.ident, lval.array_index, exp);
+    let lval_value = lval.generate_program(program, scopes).unwrap_int_ptr();
+    let lkind = scopes.get_var_typekind(&lval_value, program);
+    println!("lkind: {}", lkind);
+    let exp_value = exp.generate_program(program, scopes).unwrap_int(program, scopes);
+    let rkind = scopes.get_var_typekind(&exp_value, program);
+    println!("rkind: {}", rkind);
+    let func_info = scopes.get_current_func().unwrap();
     let store_inst = func_info.new_value(program).store(exp_value, lval_value);
     func_info.push_inst(program, store_inst);
 }
@@ -595,7 +522,7 @@ pub fn if_generate_program<'a>(
     program: &mut Program,
     scopes: &mut Scopes<'a>,
 ) {
-    let cond_value = cond.generate_program(program, scopes).unwrap_int();
+    let cond_value = cond.generate_program(program, scopes).unwrap_int(program, scopes);
     let func_info = scopes.get_current_func_mut().unwrap();
     let true_block = func_info.new_bb_dfg(program, Some("%if_true"));
     let false_block = func_info.new_bb_dfg(program, Some("%if_false"));
@@ -637,7 +564,7 @@ pub fn while_generate_program<'a>(
     let jump_inst = func_info.new_value(program).jump(entry_block);
     func_info.push_inst(program, jump_inst);
     func_info.push_block(program, entry_block);
-    let cond_value = cond.generate_program(program, scopes).unwrap_int();
+    let cond_value = cond.generate_program(program, scopes).unwrap_int(program, scopes);
 
     // 接下来处理 entry 的跳转语句
     let func_info = scopes.get_current_func_mut().unwrap();
@@ -682,7 +609,7 @@ impl LOrExp {
                     .get_current_func_mut()
                     .unwrap()
                     .push_inst(program, result);
-                let left_value = left.generate_program(program, scopes).unwrap_int();
+                let left_value = left.generate_program(program, scopes).unwrap_int(program, scopes);
                 let func_info = scopes.get_current_func_mut().unwrap();
                 let zero = func_info.new_value(program).integer(0);
                 // 要把 left_value 和 zero 比较
@@ -707,7 +634,7 @@ impl LOrExp {
                 func_info.push_inst(program, branch_inst);
                 // 先处理 right_block
                 func_info.push_block(program, right_block);
-                let right_value = right.generate_program(program, scopes).unwrap_int();
+                let right_value = right.generate_program(program, scopes).unwrap_int(program, scopes);
                 let func_info = scopes.get_current_func_mut().unwrap();
                 let rhs_inst =
                     func_info
@@ -745,7 +672,7 @@ impl LAndExp {
                     .get_current_func_mut()
                     .unwrap()
                     .push_inst(program, result);
-                let left_value = left.generate_program(program, scopes).unwrap_int();
+                let left_value = left.generate_program(program, scopes).unwrap_int(program, scopes);
                 let func_info = scopes.get_current_func_mut().unwrap();
                 let zero = func_info.new_value(program).integer(0);
                 // 要把 left_value 和 zero 比较
@@ -770,7 +697,7 @@ impl LAndExp {
                 func_info.push_inst(program, branch_inst);
                 // 先处理 right_block
                 func_info.push_block(program, right_block);
-                let right_value = right.generate_program(program, scopes).unwrap_int();
+                let right_value = right.generate_program(program, scopes).unwrap_int(program, scopes);
                 let func_info = scopes.get_current_func_mut().unwrap();
                 let rhs_inst =
                     func_info
@@ -804,8 +731,8 @@ impl EqExp {
                     EqOp::Eq => BinaryOp::Eq,
                     EqOp::Ne => BinaryOp::NotEq,
                 };
-                let lhs_value = left_value.unwrap_int();
-                let rhs_value = right_value.unwrap_int();
+                let lhs_value = left_value.unwrap_int(program, scopes);
+                let rhs_value = right_value.unwrap_int(program, scopes);
                 let func_info = scopes.get_current_func_mut().unwrap();
                 let binary_inst = func_info
                     .new_value(program)
@@ -830,8 +757,8 @@ impl RelExp {
                     RelOp::Le => BinaryOp::Le,
                     RelOp::Ge => BinaryOp::Ge,
                 };
-                let lhs_value = left_value.unwrap_int();
-                let rhs_value = right_value.unwrap_int();
+                let lhs_value = left_value.unwrap_int(program, scopes);
+                let rhs_value = right_value.unwrap_int(program, scopes);
                 let func_info = scopes.get_current_func_mut().unwrap();
                 let binary_inst = func_info
                     .new_value(program)
@@ -854,8 +781,8 @@ impl AddExp {
                     AddOp::Add => BinaryOp::Add,
                     AddOp::Sub => BinaryOp::Sub,
                 };
-                let lhs_value = left_value.unwrap_int();
-                let rhs_value = right_value.unwrap_int();
+                let lhs_value = left_value.unwrap_int(program, scopes);
+                let rhs_value = right_value.unwrap_int(program, scopes);
                 let func_info = scopes.get_current_func_mut().unwrap();
                 let binary_inst = func_info
                     .new_value(program)
@@ -879,8 +806,8 @@ impl MulExp {
                     MulOp::Div => BinaryOp::Div,
                     MulOp::Mod => BinaryOp::Mod,
                 };
-                let lhs_value = left_value.unwrap_int();
-                let rhs_value = right_value.unwrap_int();
+                let lhs_value = left_value.unwrap_int(program, scopes);
+                let rhs_value = right_value.unwrap_int(program, scopes);
                 let func_info = scopes.get_current_func_mut().unwrap();
                 let binary_inst = func_info
                     .new_value(program)
@@ -898,7 +825,7 @@ impl UnaryExp {
             UnaryExp::Primary(primary_exp) => primary_exp.generate_program(program, scopes),
             UnaryExp::Unary(op, unary_exp) => {
                 let value = unary_exp.generate_program(program, scopes);
-                let int_value = value.unwrap_int();
+                let int_value = value.unwrap_int(program, scopes);
                 let func_info = scopes.get_current_func_mut().unwrap();
                 match op {
                     UnaryOp::Pos => value,
@@ -928,7 +855,7 @@ impl UnaryExp {
                 if let Some(args) = args {
                     for arg in &args.params {
                         // 把 ArrayPtr 转换为 Value
-                        params.push(arg.generate_program(program, scopes).unwrap_int());
+                        params.push(arg.generate_program(program, scopes).unwrap_val(program, scopes));
                     }
                 }
                 let callee = *scopes.get_func(ident).unwrap();
@@ -944,44 +871,7 @@ impl UnaryExp {
 impl PrimaryExp {
     pub fn generate_program(&self, program: &mut Program, scopes: &mut Scopes) -> ExpResult {
         match self {
-            PrimaryExp::LVal(lval) => {
-                // Load the alloc value
-                let temp = lval.generate_program(program, scopes);
-                match temp {
-                    ExpResult::ArrayPtr(p) => {
-                        return ExpResult::ArrayPtr(p);
-                    }
-                    _ => {}
-                }
-                let value = temp.unwrap_int();
-                if scopes.is_global_scope() {
-                    return ExpResult::Int(value);
-                }
-
-                let ty: &ValueKind;
-                if value.is_global() {
-                    let func_info = scopes.get_current_func_mut().unwrap();
-                    let load_inst = func_info.new_value(program).load(value);
-                    func_info.push_inst(program, load_inst);
-                    return ExpResult::Int(load_inst);
-                } else {
-                    ty = program
-                        .func(*scopes.get_current_func().unwrap().get_func())
-                        .dfg()
-                        .value(value)
-                        .kind();
-                };
-                match ty {
-                    ValueKind::Integer(_) => ExpResult::Int(value),
-                    _ => {
-                        let func_info = scopes.get_current_func_mut().unwrap();
-                        let load_inst = func_info.new_value(program).load(value);
-                        func_info.push_inst(program, load_inst);
-                        ExpResult::Int(load_inst)
-                    }
-                }
-            }
-
+            PrimaryExp::LVal(lval) => lval.generate_program(program, scopes),
             PrimaryExp::Number(x) => ExpResult::Int(if scopes.is_global_scope() {
                 program.new_value().integer(*x)
             } else {
@@ -998,6 +888,7 @@ impl PrimaryExp {
 
 impl LVal {
     pub fn generate_program(&self, program: &mut Program, scopes: &mut Scopes) -> ExpResult {
+        println!("LVal: {}", self.ident);
         let var_value = scopes.get_value(&self.ident).cloned();
         match var_value {
             Some(VarValue::Const(x)) => {
@@ -1009,203 +900,240 @@ impl LVal {
             }
             Some(VarValue::Value(value)) => {
                 // 我得到的是一个 alloc
-                if !self.array_index.is_empty() {
-                    // 要用数组, 先要load 进来
-                    // %ptr = load @arr
-                    let load_inst = scopes
-                        .get_current_func_mut()
-                        .unwrap()
-                        .new_value(program)
-                        .load(value);
-                    let func_info = scopes.get_current_func().unwrap();
-                    func_info.push_inst(program, load_inst);
-                    let mut pointer_inst = load_inst;
-                    for index in &self.array_index {
-                        let index_value = index.generate_program(program, scopes).unwrap_int();
-                        let base_ty = program
-                            .func(*scopes.get_current_func().unwrap().get_func())
-                            .dfg().value(value).ty();
-                        pointer_inst = match base_ty.kind() {
-                            TypeKind::Array(_, _) => {
-                                scopes
-                                    .get_current_func()
-                                    .unwrap()
-                                    .new_value(program)
-                                    .get_elem_ptr(load_inst, index_value)
-                            },
-                            TypeKind::Pointer(_) => {
-                                scopes
-                                    .get_current_func()
-                                    .unwrap()
-                                    .new_value(program)
-                                    .get_ptr(load_inst, index_value)
-                            },
-                            _ => unreachable!(),
-                        };
-                        let func_info = scopes.get_current_func_mut().unwrap();
-                        func_info.push_inst(program, pointer_inst);
-                    }
-                    return ExpResult::Int(pointer_inst)
-                }
-                // 剩下的没有数组下标, 可能是一个普通的变量
-                // 也可能是一个指针
-                let ty = program
-                    .func(*scopes.get_current_func().unwrap().get_func())
-                    .dfg()
-                    .value(value)
-                    .ty();
-                
-                let ret = match ty.kind() {
+                // 现在无论如何都是一个Pointer
+                // 但是这个Pointer的Base可能是整数, 数组以及一个指针
+                // 如果是 arr[2][3], 取arr[1]的话必须是一个 ArrayPtr
+                // 但是如果是 arr[1][1] 就应该是一个IntPtr
+                let mut is_ptr = false; // 判断扒了皮是不是还是一个Pointer
+                // 如果扒了皮还是Pointer就必须先 Load
+                let mut dims = 0;
+                let kind = scopes.get_var_typekind(&value, program);
+                println!("base kind: {}", kind);
+                match kind {
                     TypeKind::Pointer(base) => {
-                        if base.is_i32() {
-                            return ExpResult::Int(value);
+                        let mut now_ty = &base;
+                        // 现在试图把数组的维数还原出来
+                        loop {
+                            match now_ty.kind() {
+                                TypeKind::Array(base, _len) => {
+                                    now_ty = base;
+                                }
+                                TypeKind::Pointer(base) => {
+                                    now_ty = base;
+                                    is_ptr = true;
+                                }
+                                _ => break,
+                            }
+                            dims += 1;
                         }
-                        let func_info = scopes.get_current_func().unwrap();
-                        let temp_value = get_temporary_value_int(program, scopes, 0);
-                        let pointer = func_info.new_value(program).get_elem_ptr(value, temp_value);
-                        func_info.push_inst(program, pointer);
-                        ExpResult::ArrayPtr(pointer)
                     }
-                    TypeKind::Array(_, _) => {
+                    _ => unreachable!(),
+                }
+                println!("The dims is {}", dims);
+                println!("The is_ptr is {}", is_ptr);
+
+                let mut now_value = value;
+
+                if is_ptr {
+                    let func_info = scopes.get_current_func().unwrap();
+                    let load_inst = func_info.new_value(program).load(value);
+                    func_info.push_inst(program, load_inst);
+                    now_value = load_inst;
+                }
+
+                let mut count = 0;
+                let mut ptr = now_value;
+                // 对于 arr[][5], 读取 arr[1] 就要先 get_ptr
+                // 对于第二个开始再进行 get_elem_ptr
+                for index in &self.array_index {
+                    let index_value = index.generate_program(program, scopes).unwrap_int(program, scopes);
+                    let func_info = scopes.get_current_func().unwrap();
+                    
+                    println!("entry_ty: {}", scopes.get_var_typekind(&ptr, program));
+
+                    ptr = if is_ptr && count == 0 {
+                        println!("The FIRST ptr is {:?}", ptr);
+                        let ptr_inst = func_info.new_value(program).get_ptr(ptr, index_value);
+                        func_info.push_inst(program, ptr_inst);
+                        ptr_inst
+                    } else {
+                        let elem_ptr_inst = func_info.new_value(program).get_elem_ptr(ptr, index_value);
+                        func_info.push_inst(program, elem_ptr_inst);
+                        elem_ptr_inst
+                    };
+                    count += 1;
+
+                    println!("end_ty: {}", scopes.get_var_typekind(&ptr, program));
+
+                }
+
+
+
+                if count == dims {
+                    // 是一个一直 dereference 到 Int 的指针
+                    println!("The Int ptr is {:?}", ptr);
+                    ExpResult::IntPtr(ptr)
+                } else {
+                    // 是一个类似于数组参数一样的东西
+                    // 传递数组参数相当于传递其第一个元素的地址
+                    // arr, arr[1] 都是数组参数
+                    // 第一维省略了所以要用 get_ptr
+                    // 但是后面没省略的要用回 get_elem_ptr
+                    /*
+                     * %17 = load @arr
+                     * %18 = load @i
+                     * %19 = getptr %17, %18
+                     * %20 = getelemptr %19, 0
+                     */ 
+                    if !is_ptr || !self.array_index.is_empty() {
                         let func_info = scopes.get_current_func().unwrap();
-                        let temp_value = get_temporary_value_int(program, scopes, 0);
-                        let pointer = func_info.new_value(program).get_elem_ptr(value, temp_value);
-                        func_info.push_inst(program, pointer);
-                        ExpResult::ArrayPtr(pointer)
+                        let zero = func_info.new_value(program).integer(0);
+                        let load_inst = func_info.new_value(program).get_elem_ptr(ptr, zero);
+                        func_info.push_inst(program, load_inst);
+                        ExpResult::ArrayPtr(load_inst)
+                    } else {
+                        ExpResult::ArrayPtr(ptr)
                     }
-                    _ => ExpResult::Int(value),
-                };
-                ret
+                }
+
             }
             _ => ExpResult::Void,
         }
     }
 }
 
+#[derive(Debug, Clone)]
 pub enum InitializedValue {
+    Const(i32),
     ExpValue(Value),
     Array(Vec<InitializedValue>),
 }
 
 impl InitVal {
-    pub fn generate_program(&self, program: &mut Program, scopes: &mut Scopes, ty: &Type) -> InitializedValue {
+    pub fn generate_program(
+        &self,
+        program: &mut Program,
+        scopes: &mut Scopes,
+    ) -> InitializedValue {
         match self {
-            InitVal::Exp(exp) => InitializedValue::ExpValue(exp.generate_program(program, scopes).unwrap_int()),
+            InitVal::Exp(exp) => {
+                if scopes.is_global_scope() {
+                    return InitializedValue::Const(exp.evaluate(scopes));
+                }
+                InitializedValue::ExpValue(exp.generate_program(program, scopes).unwrap_int(program, scopes))
+            }
             InitVal::Array(array) => {
                 let mut values = Vec::new();
-                let (base, len) = match ty.kind() {
-                    TypeKind::Array(base, len) => (base, len),
-                    _ => unreachable!(),
-                };
-                let mut count = 0;
                 for val in array {
-                    values.push(val.generate_program(program, scopes, base));
-                    count = count + 1;
-                }
-                for _ in count..*len {
-                    values.push(InitializedValue::get_zero(program, scopes, base));
-                }
-                let array_value = InitializedValue::Array(values);
-                array_value
-            }
-        }
-    }
-
-    /// 计算全局变量的初始化
-    pub fn to_const(&self, program: &mut Program, scopes: &Scopes, ty: &Type, reshaped: &ReshapeTy) -> VarValue {
-        match self {
-            InitVal::Exp(exp) => VarValue::Const(exp.evaluate(scopes)),
-            InitVal::Array(array) => {
-                let mut values = Vec::new();
-                // 把所有的值都填充进去
-                let (base, len) = match ty.kind() {
-                    TypeKind::Array(base, len) => (base, len),
-                    _ => unreachable!(),
-                };
-
-                
-                let mut array_count: usize = 0;
-                let mut exp_count: usize = 0;
-                for val in array {
-                    let var_value = val.to_const(program, scopes, base, reshaped);
-                    match var_value {
-                        VarValue::Const(int_num) => {
-                            values.push(get_temporary_value_int(program, scopes, int_num));
-                        }
-                        VarValue::Value(value) => {
-                            values.push(value);
-                        }
-                    }
-                    array_count += 1;
-                }
-                // 如果没有填满, 那么就要填充0
-                for _ in array_count..*len {
-                    values.push(get_zero(program, scopes, base));
-                }
-                let array_value = get_temporary_value_array(program, scopes, values);
-                VarValue::Value(array_value)
-            }
-        }
-    }
-}
-
-/// 把一个数组的类型变换为: [2][3][4] = [(4, 4), (3, 12), (2, 24)]
-
-pub struct ReshapeTy {
-    pub tys: Vec<(i32, i32)>,
-}
-
-impl ReshapeTy {
-    pub fn last(&self) -> &(i32, i32) {
-        self.tys.last().unwrap()
-    }
-
-    pub fn append(&mut self, other: ReshapeTy) {
-        for ty in other.tys {
-            self.tys.push(ty);
-        }
-    }
-
-    pub fn push(&mut self, ty: (i32, i32)) {
-        self.tys.push(ty);
-    }
-}
-
-pub fn reshape_ty(ty: &Type) -> ReshapeTy {
-    let mut ret = ReshapeTy { tys: Vec::new() };
-    match ty.kind() {
-        TypeKind::Array(base, len) => {
-            let base_shape = reshape_ty(base);
-            let total = base_shape.last().1 * (*len as i32);
-            ret.append(base_shape);
-            ret.push((*len as i32, total));
-        }
-        _ => {
-            ret.push((0, 1));
-        }
-    }
-    ret
-}
-
-impl InitializedValue {
-    pub fn get_zero(program: &mut Program, scopes: &Scopes, ty: &Type) -> InitializedValue {
-        match ty.kind() {
-            TypeKind::Int32 => InitializedValue::ExpValue(
-                get_temporary_value_int(program, scopes, 0)
-            ),
-            TypeKind::Array(base, len) => {
-                let mut values = Vec::new();
-                for _ in 0..*len {
-                    values.push(InitializedValue::get_zero(program, scopes, base));
+                    values.push(val.generate_program(program, scopes));
                 }
                 InitializedValue::Array(values)
             }
-            _ => unreachable!(),
+        }
+    }
+}
+
+
+impl InitializedValue {
+
+    /// 重塑一个数组, 例如: [2][3][4] = [(4, 4), (3, 12), (2, 24)]
+    pub fn reshape(self, ty: &Type) -> Self {
+        let mut lens = Vec::new();
+        // 得到了一个reshape后的数组长度
+        let mut ty = ty;
+        loop {
+            match ty.kind() {
+                TypeKind::Int32 => break,
+                TypeKind::Array(base, len) => {
+                    lens.push(*len);
+                    ty = base;
+                }
+                _ => unreachable!()
+            }
+        }
+
+        let mut new_lens = Vec::new();
+        let mut last_len = 1;
+        for len in lens.iter().rev() {
+            last_len = last_len * len;
+            new_lens.push((*len, last_len));
+        }
+
+        match self {
+            InitializedValue::Const(_) => self,
+            InitializedValue::ExpValue(_) => self,
+            InitializedValue::Array(a) => {
+                // lens不能为空
+                Self::array_reshape(a, &new_lens)
+            }
+        }
+    }
+
+    pub fn array_reshape(inits: Vec<InitializedValue>, lens: &Vec<(usize, usize)>) -> Self {
+        let mut now_array: Vec<Vec<Self>> = vec![vec![]; lens.len() + 1];
+        // now_array[idx] 表示第 idx 维当前放置的元素
+        // arr[2][3][4] = {1, 2, 3, 4}
+        // now_array[0] 里面就会先放入 {1, 2, 3, 4}
+        let mut count = 0;
+
+        for init in inits {
+            match init {
+                Self::Array(a) => {
+                    // 现在是未能完全对齐的情况
+                    // 找到当前第一个不空的维度
+                    let now_dim = match now_array.iter().position(|a| !a.is_empty()) {
+                        Some(0) => unreachable!(),
+                        Some(x) => &lens[..x],
+                        None => &lens[..lens.len() - 1],
+                    };
+                    // 现在向当前维度放入塑形后的初始化列表
+                    now_array[now_dim.len()].push(Self::array_reshape(a, &now_dim.to_vec()));
+                    Self::packen(&mut now_array, lens);
+                    count += now_dim.last().unwrap().1; // 已经放入的元素个数
+                }
+                _ => {
+                    // 剩下的是 Const 或者 ExpValue
+                    now_array[0].push(init);
+                    Self::packen(&mut now_array, lens);
+                    count += 1;
+                }
+            }
+        }
+
+        while count < lens.last().unwrap().1 {
+            // 没能满足整个数组
+            now_array[0].push(Self::Const(0));
+            Self::packen(&mut now_array, lens);
+            count += 1;
+        }
+        // 之所以使用pop是因为它传的不是引用
+        now_array.pop().unwrap().pop().unwrap()
+    }
+
+    pub fn packen(now_array: &mut Vec<Vec<Self>>, lens: &Vec<(usize, usize)>) {
+        // 现在要把 now_array 里面的元素打包到上一层
+        let mut idx = 0;
+        while idx < lens.len() {
+            let mut new_array = Vec::new();
+            let (len, _total) = lens[idx];
+            if now_array[idx].len() == len {
+                // 找到了一个已经填满的维度
+                new_array.append(&mut now_array[idx]);
+                now_array[idx].clear();
+                now_array[idx + 1].push(Self::Array(new_array));
+            }
+            idx += 1;
         }
     }
 
     pub fn generate_store_inst(&self, program: &mut Program, scopes: &Scopes, alloc_inst: Value) {
         match self {
+            InitializedValue::Const(num) => {
+                let value = get_temporary_value_int(program, scopes, *num);
+                let func_info = scopes.get_current_func().unwrap();
+                let store_inst = func_info.new_value(program).store(value, alloc_inst);
+                func_info.push_inst(program, store_inst);
+            }
             InitializedValue::ExpValue(value) => {
                 let func_info = scopes.get_current_func().unwrap();
                 let store_inst = func_info.new_value(program).store(*value, alloc_inst);
@@ -1214,15 +1142,30 @@ impl InitializedValue {
             InitializedValue::Array(values) => {
                 for (index, value) in values.iter().enumerate() {
                     let index_value = get_temporary_value_int(program, scopes, index as i32);
-                    let pointer_inst = scopes
-                        .get_current_func()
-                        .unwrap()
-                        .new_value(program)
-                        .get_elem_ptr(alloc_inst, index_value);
                     let func_info = scopes.get_current_func().unwrap();
+                    let pointer_inst = 
+                        func_info
+                            .new_value(program)
+                            .get_elem_ptr(alloc_inst, index_value);
                     func_info.push_inst(program, pointer_inst);
                     value.generate_store_inst(program, scopes, pointer_inst);
                 }
+            }
+        }
+    }
+
+
+    pub fn to_const(&self, program: &mut Program, scopes: &Scopes) -> Value {
+        match self {
+            InitializedValue::Const(num) => get_temporary_value_int(program, scopes, *num),
+            InitializedValue::ExpValue(_) => unreachable!(), // 常量不了
+            InitializedValue::Array(values) => {
+                let mut new_values = Vec::new();
+                for value in values {
+                    new_values.push(value.to_const(program, scopes));
+                }
+                let array_value = get_temporary_value_array(program, scopes, new_values);
+                array_value
             }
         }
     }
