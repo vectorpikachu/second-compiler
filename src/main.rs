@@ -1,6 +1,8 @@
 mod irgenerator;
+mod assembler;
 mod ast;
 use irgenerator::generate_program;
+use assembler::generate_riscv;
 use koopa::back::KoopaGenerator;
 use lalrpop_util::lalrpop_mod;
 use std::io::Result;
@@ -27,8 +29,21 @@ fn main() -> Result<()> {
 
     let program = generate_program(&ast).unwrap();
 
-    // 输出到文件
-    KoopaGenerator::from_path(output).unwrap().generate_on(&program).unwrap();
+    if mode == "-koopa" {
+        // 输出到文件
+        KoopaGenerator::from_path(output).unwrap().generate_on(&program).unwrap();
+    } else if mode == "-riscv" {
+        // let mut buf = std::fs::File::create(output).unwrap();
+        let mut buf: Vec<u8> = Vec::new();
+        generate_riscv(&program, &mut buf);
+        let asm = String::from_utf8(buf).unwrap();
+        std::fs::write(output, asm).unwrap();
+    } else if mode == "-perf" {
+        println!("Performance mode not implemented yet.");
+    } else {
+        panic!("Unknown mode: {}", mode);
+    }
+    
 
     Ok(())
 }

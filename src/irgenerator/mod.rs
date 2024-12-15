@@ -4,7 +4,7 @@ use crate::ast::*;
 mod generate_program;
 mod scopes;
 mod expression;
-mod function_info;
+pub mod function_info;
 /// 生成IR的入口
 pub fn generate_program(comp_unit: &CompUnit) -> Result<Program, String> {
     let mut program = Program::new();
