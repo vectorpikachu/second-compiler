@@ -2,7 +2,7 @@ decl @getint(): i32
 
 decl @getch(): i32
 
-decl @getint_0(*i32): i32
+decl @getarray(*i32): i32
 
 decl @putint(i32)
 
@@ -14,91 +14,19 @@ decl @starttime()
 
 decl @stoptime()
 
-fun @f1d(%0: *i32) {
-%entry:
-  @arr = alloc *i32
-  @i = alloc i32
-  jump %1
-
-%1:
-  store %0, @arr
-  store 0, @i
-  jump %while_entry
-
-%while_entry:
-  %2 = load @i
-  %3 = lt %2, 10
-  br %3, %while_body, %while_exit
-
-%while_body:
-  %4 = load @arr
-  %5 = load @i
-  %6 = getptr %4, %5
-  %7 = load @i
-  store %7, %6
-  %8 = load @i
-  %9 = add %8, 1
-  store %9, @i
-  jump %while_entry
-
-%while_exit:
-  jump %exit
-
-%exit:
-  ret
-}
-
-fun @f2d(%10: *[i32, 10]) {
-%entry:
-  @arr = alloc *[i32, 10]
-  @i = alloc i32
-  jump %11
-
-%11:
-  store %10, @arr
-  %12 = load @arr
-  %13 = getptr %12, 1
-  %14 = getelemptr %13, 2
-  store 3, %14
-  store 0, @i
-  jump %while_entry
-
-%while_entry:
-  %15 = load @i
-  %16 = lt %15, 10
-  br %16, %while_body, %while_exit
-
-%while_body:
-  %17 = load @arr
-  %18 = load @i
-  %19 = getptr %17, %18
-  %20 = getelemptr %19, 0
-  call @f1d(%20)
-  %21 = load @i
-  %22 = add %21, 1
-  store %22, @i
-  jump %while_entry
-
-%while_exit:
-  jump %exit
-
-%exit:
-  ret
-}
-
 fun @main(): i32 {
 %entry:
   %retval = alloc i32
-  jump %23
+  jump %0
 
-%23:
-  store 33, %retval
+%0:
+  store 0, %retval
   jump %exit
 
-%24:
+%1:
   jump %exit
 
 %exit:
-  %25 = load %retval
-  ret %25
+  %2 = load %retval
+  ret %2
 }

@@ -1,12 +1,24 @@
 use std::collections::HashMap;
 
-use koopa::ir::{BasicBlock, Function};
+use koopa::ir::{BasicBlock, Function, Value};
 
+#[derive(Debug, Clone)]
+pub enum RealValue {
+    Const(i32),
+    StackPos(i32), // 后面是偏移
+    Reg(String), // 寄存器
+    DataSeg(String), // .data 上的变量
+    None,
+}
 
 pub struct FunctionInfo {
     func: Function,
     bb_names: HashMap<BasicBlock, String>,
     now_id: usize,
+    stack_size: usize,
+    alloc_offset: HashMap<Value, i32>,
+    current_offset: i32,
+    real_value: HashMap<Value, RealValue>,
 }
 
 impl FunctionInfo {
@@ -15,6 +27,10 @@ impl FunctionInfo {
             func,
             bb_names: HashMap::new(),
             now_id: 0,
+            stack_size: 0,
+            alloc_offset: HashMap::new(),
+            current_offset: 0,
+            real_value: HashMap::new(),
         }
     }
 
@@ -37,4 +53,39 @@ impl FunctionInfo {
             }
         }
     }
+
+    pub fn get_stack_size(&self) -> usize {
+        self.stack_size
+    }
+
+    pub fn set_stack_size(&mut self, size: usize) {
+        self.stack_size = size;
+    }
+
+    pub fn get_current_offset(&mut self, value: &Value) -> i32 {
+        match self.alloc_offset.get(value) {
+            Some(offset) => *offset,
+            None => {
+                self.current_offset += 4;
+                self.alloc_offset.insert(*value, self.current_offset);
+                self.current_offset
+            }
+        }
+    }
+
+    pub fn get_allocs(&self) -> &HashMap<Value, i32> {
+        &self.alloc_offset
+    }
+
+    pub fn get_real_value(&self, value: &Value) -> RealValue {
+        match self.real_value.get(value) {
+            Some(real_value) => real_value.clone(),
+            None => RealValue::None,
+        }
+    }
+
+    pub fn set_real_value(&mut self, value: Value, real_value: RealValue) {
+        self.real_value.insert(value, real_value);
+    }
+
 }
