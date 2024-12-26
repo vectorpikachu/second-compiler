@@ -20,13 +20,25 @@ fun @main(): i32 {
   jump %0
 
 %0:
-  store 0, %retval
+  %1 = alloc i32
+  %2 = ne 2, 0
+  store %2, %1
+  br %2, %and_true, %and_end
+
+%and_true:
+  %3 = ne 4, 0
+  store %3, %1
+  jump %and_end
+
+%and_end:
+  %4 = load %1
+  store %4, %retval
   jump %exit
 
-%1:
+%5:
   jump %exit
 
 %exit:
-  %2 = load %retval
-  ret %2
+  %6 = load %retval
+  ret %6
 }
