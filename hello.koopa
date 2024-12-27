@@ -14,94 +14,37 @@ decl @starttime()
 
 decl @stoptime()
 
-fun @main(): i32 {
+fun @f(): i32 {
 %entry:
   %retval = alloc i32
-  @a = alloc i32
   jump %0
 
 %0:
-  store 10, @a
-  %1 = load @a
-  %2 = gt %1, 1
-  br %2, %if_true, %if_false
-
-%if_true:
-  %3 = load @a
-  %4 = gt %3, 2
-  br %4, %if_true_0, %if_false_0
-
-%if_true_0:
-  %5 = load @a
-  %6 = lt %5, 3
-  br %6, %if_true_1, %if_false_1
-
-%if_true_1:
-  %7 = load @a
-  store %7, %retval
+  store 0, %retval
   jump %exit
 
-%8:
-  jump %if_end
-
-%if_false_1:
-  %9 = load @a
-  %10 = gt %9, 4
-  br %10, %if_true_2, %if_false_2
-
-%if_true_2:
-  %11 = load @a
-  %12 = lt %11, 5
-  br %12, %if_true_3, %if_false_3
-
-%if_true_3:
-  %13 = load @a
-  %14 = add %13, 1
-  store %14, %retval
-  jump %exit
-
-%15:
-  jump %if_end_0
-
-%if_false_3:
-  %16 = load @a
-  %17 = add %16, 2
-  store %17, %retval
-  jump %exit
-
-%18:
-  jump %if_end_0
-
-%if_end_0:
-  jump %if_end_1
-
-%if_false_2:
-  jump %if_end_1
-
-%if_end_1:
-  jump %if_end
-
-%if_end:
-  jump %if_end_2
-
-%if_false_0:
-  jump %if_end_2
-
-%if_end_2:
-  jump %if_end_3
-
-%if_false:
-  jump %if_end_3
-
-%if_end_3:
-  %19 = sub 0, 1
-  store %19, %retval
-  jump %exit
-
-%20:
+%1:
   jump %exit
 
 %exit:
-  %21 = load %retval
-  ret %21
+  %2 = load %retval
+  ret %2
+}
+
+fun @main(): i32 {
+%entry:
+  %retval = alloc i32
+  jump %3
+
+%3:
+  %4 = call @f()
+  store %4, %retval
+  jump %exit
+
+%5:
+  jump %exit
+
+%exit:
+  %6 = load %retval
+  ret %6
 }

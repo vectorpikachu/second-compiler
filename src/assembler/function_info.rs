@@ -16,6 +16,7 @@ pub struct FunctionInfo {
     bb_names: HashMap<BasicBlock, String>,
     now_id: usize,
     stack_size: usize,
+    call_flag: bool,
     alloc_offset: HashMap<Value, i32>,
     current_offset: i32,
     real_value: HashMap<Value, RealValue>,
@@ -28,6 +29,7 @@ impl FunctionInfo {
             bb_names: HashMap::new(),
             now_id: 0,
             stack_size: 0,
+            call_flag: false,
             alloc_offset: HashMap::new(),
             current_offset: 0,
             real_value: HashMap::new(),
@@ -42,17 +44,17 @@ impl FunctionInfo {
         self.bb_names.get(&bb).unwrap().clone()
     }
 
-    pub fn set_bb_name(&mut self, bb: BasicBlock, name: Option<String>) {
+    pub fn set_bb_name(&mut self, bb: BasicBlock, name: Option<String>, func_name: String) {
         self.now_id += 1;
         match name {
             Some(name) => {
                 // Koopa 里的名字是我们自己设置的名字
                 // 打印出来自动加编号, 但是里面存储的话依然是原先的
                 // 还是生成 risc-v 需要自己手动加编号
-                self.bb_names.insert(bb, format!("{}{}", name.strip_prefix("%").unwrap().to_string(), self.now_id));
+                self.bb_names.insert(bb, format!("{}{}{}", func_name, name.strip_prefix("%").unwrap().to_string(), self.now_id));
             },
             None => {
-                self.bb_names.insert(bb, format!("bb{}", self.now_id));
+                self.bb_names.insert(bb, format!("{}bb{}", func_name, self.now_id));
             }
         }
     }
@@ -74,6 +76,18 @@ impl FunctionInfo {
                 self.current_offset
             }
         }
+    }
+
+    pub fn set_current_offset(&mut self, offset: i32) {
+        self.current_offset = offset;
+    }
+
+    pub fn set_call_flag(&mut self, flag: bool) {
+        self.call_flag = flag;
+    }
+
+    pub fn get_call_flag(&self) -> bool {
+        self.call_flag
     }
 
     pub fn get_allocs(&self) -> &HashMap<Value, i32> {
