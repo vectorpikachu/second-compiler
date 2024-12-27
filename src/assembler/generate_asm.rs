@@ -26,6 +26,17 @@ impl GenerateAsm for Program {
     type Out = ();
     // 生成整个程序的汇编代码
     fn generate_asm(&self, buf: &mut Vec<u8>, program_info: &mut ProgramInfo) {
+        // 要先处理全局的, 分配在 Data 中的数据
+        for value in self.inst_layout() {
+            let value_data = self.borrow_value(*value);
+            let name = value_data.name().as_ref().unwrap().strip_prefix("@").unwrap();
+            program_info.insert_value_name(*value, name.to_string());
+            writeln!(buf, "  .data").unwrap();
+            writeln!(buf, "  .globl {}", name).unwrap();
+            writeln!(buf, "{}:", name).unwrap();
+            value_data.generate_asm(buf, program_info);
+        }
+        
         // 我们对于当前的每个函数都生成汇编代码
         for &func in self.func_layout() {
             let func_info = FunctionInfo::new(func);
@@ -185,6 +196,7 @@ impl GenerateAsm for ValueData {
             ValueKind::Integer(num) => {
                 // 应该处理 local 的 integer 只会在 Value里面处理
                 // 这里应该要处理一个全局的 integer
+                writeln!(buf, "  .word {}", num.value()).unwrap();
             }
             ValueKind::Jump(dest) => {
                 dest.generate_asm(buf, program_info);

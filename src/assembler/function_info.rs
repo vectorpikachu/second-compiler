@@ -43,12 +43,15 @@ impl FunctionInfo {
     }
 
     pub fn set_bb_name(&mut self, bb: BasicBlock, name: Option<String>) {
+        self.now_id += 1;
         match name {
             Some(name) => {
-                self.bb_names.insert(bb, name.strip_prefix("%").unwrap().to_string());
+                // Koopa 里的名字是我们自己设置的名字
+                // 打印出来自动加编号, 但是里面存储的话依然是原先的
+                // 还是生成 risc-v 需要自己手动加编号
+                self.bb_names.insert(bb, format!("{}{}", name.strip_prefix("%").unwrap().to_string(), self.now_id));
             },
             None => {
-                self.now_id += 1;
                 self.bb_names.insert(bb, format!("bb{}", self.now_id));
             }
         }
