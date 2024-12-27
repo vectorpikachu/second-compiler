@@ -27,11 +27,14 @@ or_false:
 or_end:
   lw t0, 8(sp)
   sw t0, 16(sp)
+  lw t0, 16(sp)
+  sw t0, 20(sp)
   j exit
 bb2:
   j exit
 exit:
-  lw t0, 16(sp)
-  mv a0, t0
+  lw t0, 20(sp)
+  sw t0, 24(sp)
+  lw a0, 24(sp)
   addi sp, sp, 32
   ret

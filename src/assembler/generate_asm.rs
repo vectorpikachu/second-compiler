@@ -107,15 +107,23 @@ impl GenerateAsm for FunctionData {
             writeln!(buf, "{}:", bb_name).unwrap();
             for inst in node.insts().keys() {
                 // Value 也是一个 Handle, 没有办法直接生成
-                self.dfg().value(*inst).generate_asm(buf, program_info);
-                let kind = self.dfg().value(*inst).kind();
+                let value_data = self.dfg().value(*inst);
+                value_data.generate_asm(buf, program_info);
                 let func_info = program_info.get_current_func_mut().unwrap();
-                match kind {
-                    ValueKind::Binary(_) => {
+                // 计算出来的值, 如果被分配了空间就需要存进去
+                // 可能还需要被用到 而且 有值产生
+                // 比如 alloc i32 不用存
+                if !value_data.ty().is_unit() && !value_data.used_by().is_empty() {
+                    let flag = match value_data.kind() {
+                        ValueKind::Alloc(_) => {
+                            false
+                        }
+                        _ => true,
+                    };
+                    if flag {
                         let offset = func_info.get_current_offset(inst);
                         writeln!(buf, "  sw t0, {}(sp)", offset).unwrap();
                     }
-                    _ => {}
                 }
             }
         }
@@ -156,9 +164,6 @@ impl GenerateAsm for Value {
                 ValueKind::Integer(num) => {
                     return RealValue::Const(num.value());
                 }
-                ValueKind::Load(load) => {
-                    return load.generate_asm(buf, program_info);
-                }
                 _ => {
                     let func_info = program_info.get_current_func_mut().unwrap();
                     let offset = func_info.get_current_offset(self);
@@ -178,7 +183,8 @@ impl GenerateAsm for ValueData {
                 val.generate_asm(buf, program_info);
             }
             ValueKind::Integer(num) => {
-                writeln!(buf, "  li a0, {}", num.value()).unwrap();
+                // 应该处理 local 的 integer 只会在 Value里面处理
+                // 这里应该要处理一个全局的 integer
             }
             ValueKind::Jump(dest) => {
                 dest.generate_asm(buf, program_info);
@@ -190,7 +196,10 @@ impl GenerateAsm for ValueData {
             ValueKind::Store(store) => {
                 store.generate_asm(buf, program_info);
             }
-            ValueKind::Load(_load) => {}
+            ValueKind::Load(load) => {
+                let v = load.generate_asm(buf, program_info);
+                
+            }
             ValueKind::Binary(binary) => {
                 binary.generate_asm(buf, program_info);
             }
@@ -219,12 +228,7 @@ impl GenerateAsm for Return {
             return;
         }
         let real_val = val.generate_asm(buf, program_info);
-        let func_info = program_info.get_current_func().unwrap();
-
-        println!("{:?}", func_info.get_allocs());
-
-        println!("{:?}", real_val);
-
+        
         match real_val {
             RealValue::Const(num) => {
                 writeln!(buf, "  li a0, {}", num).unwrap();
@@ -266,7 +270,7 @@ impl GenerateAsm for Load {
         let src_val = self.src().generate_asm(buf, program_info);
         let ret = match src_val {
             RealValue::Const(num) => {
-                // writeln!(buf, "  li t0, {}", num).unwrap();
+                writeln!(buf, "  li t0, {}", num).unwrap();
                 RealValue::Reg("t0".to_string())
             }
             RealValue::StackPos(offset) => {
