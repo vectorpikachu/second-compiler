@@ -380,9 +380,21 @@ impl GenerateAsm for Binary {
                 writeln!(buf, "  mul t0, {}, {}", "t0".to_string(), "t1".to_string()).unwrap();
             }
             BinaryOp::Div => {
+                match rhs {
+                    RealValue::Const(0) => {
+                        panic!("Divide by zero")
+                    }
+                    _ => {}
+                }
                 writeln!(buf, "  div t0, {}, {}", "t0".to_string(), "t1".to_string()).unwrap();
             }
             BinaryOp::Mod => {
+                match rhs {
+                    RealValue::Const(0) => {
+                        panic!("Divide by zero")
+                    }
+                    _ => {}
+                }
                 writeln!(buf, "  rem t0, {}, {}", "t0".to_string(), "t1".to_string()).unwrap();
             }
             BinaryOp::Eq => {

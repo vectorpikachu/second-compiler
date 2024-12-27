@@ -17,28 +17,19 @@ decl @stoptime()
 fun @main(): i32 {
 %entry:
   %retval = alloc i32
+  @x = alloc i32
   jump %0
 
 %0:
-  %1 = alloc i32
-  %2 = ne 2, 0
-  store %2, %1
-  br %2, %and_true, %and_end
-
-%and_true:
-  %3 = ne 4, 0
-  store %3, %1
-  jump %and_end
-
-%and_end:
-  %4 = load %1
-  store %4, %retval
+  store 1, @x
+  %1 = load @x
+  store %1, %retval
   jump %exit
 
-%5:
+%2:
   jump %exit
 
 %exit:
-  %6 = load %retval
-  ret %6
+  %3 = load %retval
+  ret %3
 }
