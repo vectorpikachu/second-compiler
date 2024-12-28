@@ -1,4 +1,4 @@
-global @x = alloc i32, zeroinit
+global @a = alloc [i32, 5], {1, 2, 3, 0, 0}
 
 decl @getint(): i32
 
@@ -16,182 +16,19 @@ decl @starttime()
 
 decl @stoptime()
 
-fun @add(%0: i32, %1: i32): i32 {
-%entry:
-  %retval = alloc i32
-  @a = alloc i32
-  @b = alloc i32
-  jump %2
-
-%2:
-  store %0, @a
-  store %1, @b
-  %3 = load @a
-  %4 = load @b
-  %5 = add %3, %4
-  store %5, %retval
-  jump %exit
-
-%6:
-  jump %exit
-
-%exit:
-  %7 = load %retval
-  ret %7
-}
-
-fun @sub(%8: i32, %9: i32): i32 {
-%entry:
-  %retval = alloc i32
-  @a = alloc i32
-  @b = alloc i32
-  jump %10
-
-%10:
-  store %8, @a
-  store %9, @b
-  %11 = load @a
-  %12 = load @b
-  %13 = sub %11, %12
-  store %13, %retval
-  jump %exit
-
-%14:
-  jump %exit
-
-%exit:
-  %15 = load %retval
-  ret %15
-}
-
-fun @mul(%16: i32, %17: i32): i32 {
-%entry:
-  %retval = alloc i32
-  @a = alloc i32
-  @b = alloc i32
-  jump %18
-
-%18:
-  store %16, @a
-  store %17, @b
-  %19 = load @a
-  %20 = load @b
-  %21 = mul %19, %20
-  store %21, %retval
-  jump %exit
-
-%22:
-  jump %exit
-
-%exit:
-  %23 = load %retval
-  ret %23
-}
-
-fun @div(%24: i32, %25: i32): i32 {
-%entry:
-  %retval = alloc i32
-  @a = alloc i32
-  @b = alloc i32
-  jump %26
-
-%26:
-  store %24, @a
-  store %25, @b
-  %27 = load @a
-  %28 = load @b
-  %29 = div %27, %28
-  store %29, %retval
-  jump %exit
-
-%30:
-  jump %exit
-
-%exit:
-  %31 = load %retval
-  ret %31
-}
-
 fun @main(): i32 {
 %entry:
   %retval = alloc i32
-  @x_0 = alloc i32
-  @y = alloc i32
-  jump %32
+  jump %0
 
-%32:
-  %33 = call @sub(1, 2)
-  %34 = call @div(4, 5)
-  %35 = call @mul(3, %34)
-  %36 = call @add(%33, %35)
-  store %36, @x_0
-  %37 = alloc i32
-  %38 = ne 1, 0
-  store %38, %37
-  br %38, %or_end, %or_false
-
-%or_false:
-  %39 = ne 0, 0
-  store %39, %37
-  jump %or_end
-
-%or_end:
-  %40 = load %37
-  %41 = alloc i32
-  %42 = alloc i32
-  %43 = ne 0, 0
-  store %43, %42
-  br %43, %and_true, %and_end
-
-%and_true:
-  %44 = load @x_0
-  %45 = call @sub(1, %44)
-  %46 = ne %45, 0
-  store %46, %42
-  jump %and_end
-
-%and_end:
-  %47 = load %42
-  %48 = ne %47, 0
-  store %48, %41
-  br %48, %or_end_0, %or_false_0
-
-%or_false_0:
-  %49 = alloc i32
-  %50 = load @x_0
-  %51 = ne %50, 0
-  store %51, %49
-  br %51, %or_end_1, %or_false_1
-
-%or_false_1:
-  %52 = call @add(1, 2)
-  %53 = gt %52, 10
-  %54 = ne %53, 0
-  store %54, %49
-  jump %or_end_1
-
-%or_end_1:
-  %55 = load %49
-  %56 = call @div(%55, 5)
-  %57 = call @mul(3, %56)
-  %58 = ne %57, 0
-  store %58, %41
-  jump %or_end_0
-
-%or_end_0:
-  %59 = load %41
-  %60 = call @add(%40, %59)
-  store %60, @y
-  %61 = load @x_0
-  %62 = load @y
-  %63 = add %61, %62
-  store %63, %retval
+%0:
+  store 0, %retval
   jump %exit
 
-%64:
+%1:
   jump %exit
 
 %exit:
-  %65 = load %retval
-  ret %65
+  %2 = load %retval
+  ret %2
 }

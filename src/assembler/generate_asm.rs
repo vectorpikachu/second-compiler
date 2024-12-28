@@ -1,11 +1,13 @@
 //! 生成 RISCV 的汇编代码
 
 use koopa::ir::entities::ValueData;
-use koopa::ir::values::{Binary, Branch, Call, GlobalAlloc, Jump, Load, Return, Store, ZeroInit};
+use koopa::ir::values::{Aggregate, Binary, Branch, Call, GlobalAlloc, Jump, Load, Return, Store, ZeroInit};
 use koopa::ir::{BasicBlock, BinaryOp, Function, FunctionData, Program, Value, ValueKind};
 
 use super::function_info::FunctionInfo;
 use super::program_info::ProgramInfo;
+use core::borrow;
+use std::any::Any;
 use std::cmp::max;
 use std::io::Write;
 
@@ -222,7 +224,24 @@ impl GenerateAsm for Value {
         // writeln!(buf,"  {}:", inst_name).unwrap();
         if self.is_global() {
             // 全局变量放在 .data 段
-            return RealValue::DataSeg(program_info.get_value_name(*self).unwrap());
+            let option_data = program_info.get_value_name(*self);
+            if option_data.is_none() {
+                let borrow_value = program_info.get_program().borrow_value(*self);
+                let kind = borrow_value.kind().clone();
+                drop(borrow_value);
+                match kind {
+                    ValueKind::Integer(i) => {
+                        return RealValue::Const(i.value());
+                    }
+                    ValueKind::Aggregate(aggregate) => {
+                        aggregate.generate_asm(buf, program_info);
+                    }
+                    _ => {}
+                }
+                return RealValue::None;
+            } else {
+                return RealValue::DataSeg(option_data.unwrap());
+            }
         } else {
             let func_info = program_info.get_current_func().unwrap();
             let value_data = {
@@ -295,11 +314,11 @@ impl GenerateAsm for ValueData {
                 call.generate_asm(buf, program_info);
             }
             ValueKind::ZeroInit(_zero_init) => {
-                println!("zero init");
                 writeln!(buf, "  .zero {}", self.ty().size()).unwrap();
             }
             ValueKind::Aggregate(aggregate) => {
                 println!("aggregate");
+                aggregate.generate_asm(buf, program_info);
             }
             ValueKind::GetElemPtr(get_elem_ptr) => {
                 println!("get element ptr");
@@ -605,65 +624,97 @@ impl GenerateAsm for GlobalAlloc {
             let kind = program_info.get_program().borrow_value(self.init()).kind().clone();
             
             // ? 这样做是为了避免引用不可变的引用.
-
+            kind.generate_asm(buf, program_info);
             match kind {
-                ValueKind::Return(val) => {
-                    val.generate_asm(buf, program_info);
-                }
-                ValueKind::Integer(num) => {
-                    // 应该处理 local 的 integer 只会在 Value里面处理
-                    // 这里应该要处理一个全局的 integer
-                    writeln!(buf, "  .word {}", num.value()).unwrap();
-                }
-                ValueKind::Jump(dest) => {
-                    dest.generate_asm(buf, program_info);
-                }
-                ValueKind::Alloc(_alloc) => {
-                    // 对于 alloc 语句, 应该在一开始计算 stack size 的时候就分配好
-                    // alloc 做的事情是在 ValueData 里加入了一个新的 Value
-                }
-                ValueKind::Store(store) => {
-                    store.generate_asm(buf, program_info);
-                }
-                ValueKind::Load(load) => {
-                    load.generate_asm(buf, program_info);
-                }
-                ValueKind::Binary(binary) => {
-                    binary.generate_asm(buf, program_info);
-                }
-                ValueKind::Branch(branch) => {
-                    branch.generate_asm(buf, program_info);
-                }
-                ValueKind::Call(call) => {
-                    call.generate_asm(buf, program_info);
-                }
                 ValueKind::ZeroInit(_) => {
-                    println!("zero init");
                     let size = program_info.get_program().borrow_value(self.init()).ty().size();
                     writeln!(buf, "  .zero {}", size).unwrap();
                 }
-                ValueKind::Aggregate(aggregate) => {
-                    println!("aggregate");
-                }
-                ValueKind::GetElemPtr(get_elem_ptr) => {
-                    println!("get element ptr");
-                }
-                ValueKind::GetPtr(get_ptr) => {
-                    println!("get ptr");
-                }
-                ValueKind::BlockArgRef(block_arg_ref) => {
-                    println!("block arg ref");
-                }
-                ValueKind::FuncArgRef(func_arg_ref) => {
-                    println!("func arg ref");
-                }
-                ValueKind::GlobalAlloc(global_alloc) => {
-                    global_alloc.generate_asm(buf, program_info);
-                    println!("global alloc");
-                }
-                _ => unimplemented!(),
+                _ => {}
             }
         }
+}
+
+impl GenerateAsm for ValueKind {
+    type Out = ();
+    fn generate_asm(&self, buf: &mut Vec<u8>, program_info: &mut ProgramInfo) -> Self::Out {
+        match self {
+            ValueKind::Return(val) => {
+                val.generate_asm(buf, program_info);
+            }
+            ValueKind::Integer(num) => {
+                // 应该处理 local 的 integer 只会在 Value里面处理
+                // 这里应该要处理一个全局的 integer
+                writeln!(buf, "  .word {}", num.value()).unwrap();
+            }
+            ValueKind::Jump(dest) => {
+                dest.generate_asm(buf, program_info);
+            }
+            ValueKind::Alloc(_alloc) => {
+                // 对于 alloc 语句, 应该在一开始计算 stack size 的时候就分配好
+                // alloc 做的事情是在 ValueData 里加入了一个新的 Value
+            }
+            ValueKind::Store(store) => {
+                store.generate_asm(buf, program_info);
+            }
+            ValueKind::Load(load) => {
+                load.generate_asm(buf, program_info);
+            }
+            ValueKind::Binary(binary) => {
+                binary.generate_asm(buf, program_info);
+            }
+            ValueKind::Branch(branch) => {
+                branch.generate_asm(buf, program_info);
+            }
+            ValueKind::Call(call) => {
+                call.generate_asm(buf, program_info);
+            }
+            ValueKind::ZeroInit(_) => {
+                
+            }
+            ValueKind::Aggregate(aggregate) => {
+                aggregate.generate_asm(buf, program_info);
+            }
+            ValueKind::GetElemPtr(get_elem_ptr) => {
+                println!("get element ptr");
+            }
+            ValueKind::GetPtr(get_ptr) => {
+                println!("get ptr");
+            }
+            ValueKind::BlockArgRef(block_arg_ref) => {
+                println!("block arg ref");
+            }
+            ValueKind::FuncArgRef(func_arg_ref) => {
+                println!("func arg ref");
+            }
+            ValueKind::GlobalAlloc(global_alloc) => {
+                global_alloc.generate_asm(buf, program_info);
+                println!("global alloc");
+            }
+            _ => unimplemented!(),
+        }
+    }
+}
+
+impl GenerateAsm for Aggregate {
+    type Out = ();
+
+    fn generate_asm(&self, buf: &mut Vec<u8>, program_info: &mut ProgramInfo) -> Self::Out {
+        for elem in self.elems().iter() {
+            let elem_value = elem.generate_asm(buf, program_info);
+            match elem_value {
+                RealValue::Const(v) => {
+                    writeln!(buf, "  .word {}", v).unwrap();
+                }
+                RealValue::Reg(r) => {
+                    let func_info = program_info.get_current_func_mut().unwrap();
+                    let offset = func_info.get_current_offset(elem);
+                    writeln!(buf, "  sw {}, {}(sp)", r, offset).unwrap();
+                }
+                _ => {}
+            }
+        }
+    }
 }
 
 impl RealValue {
