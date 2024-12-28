@@ -44,17 +44,17 @@ impl FunctionInfo {
         self.bb_names.get(&bb).unwrap().clone()
     }
 
-    pub fn set_bb_name(&mut self, bb: BasicBlock, name: Option<String>, func_name: String) {
+    pub fn set_bb_name(&mut self, bb: BasicBlock, name: Option<String>, func_name: String, func_id: i32) {
         self.now_id += 1;
         match name {
             Some(name) => {
                 // Koopa 里的名字是我们自己设置的名字
                 // 打印出来自动加编号, 但是里面存储的话依然是原先的
                 // 还是生成 risc-v 需要自己手动加编号
-                self.bb_names.insert(bb, format!("{}{}{}", func_name, name.strip_prefix("%").unwrap().to_string(), self.now_id));
+                self.bb_names.insert(bb, format!("{}_{}_{}_{}", func_name, func_id, name.strip_prefix("%").unwrap().to_string(), self.now_id));
             },
             None => {
-                self.bb_names.insert(bb, format!("{}bb{}", func_name, self.now_id));
+                self.bb_names.insert(bb, format!("{}_{}_bb_{}", func_name, func_id, self.now_id));
             }
         }
     }
@@ -71,9 +71,9 @@ impl FunctionInfo {
         match self.alloc_offset.get(value) {
             Some(offset) => *offset,
             None => {
-                self.current_offset += 4;
                 self.alloc_offset.insert(*value, self.current_offset);
-                self.current_offset
+                self.current_offset += 4;
+                self.current_offset - 4
             }
         }
     }

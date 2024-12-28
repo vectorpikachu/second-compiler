@@ -208,7 +208,6 @@ impl VarDef {
     pub fn generate_program<'a>(&'a self, program: &mut Program, scopes: &mut Scopes<'a>) {
         // 首先, 这个变量的类型可能只是单纯的int, 也可能是数组
         // 此时应该处理数组的情况
-        println!("VarDef: {}", self.ident);
         let ty = get_type(&self.array_index, scopes);
         /*
          * 根据是否是全局变量, 生成不同的代码
@@ -225,7 +224,6 @@ impl VarDef {
                     scopes.set_value(&self.ident, VarValue::Value(global_value));
                 }
                 None => {
-                    println!("No init_val");
                     let zero_init_value = program.new_value().zero_init(ty);
                     let global_value = program.new_value().global_alloc(zero_init_value);
                     program.set_value_name(global_value, Some(format!("@{}", self.ident)));
@@ -261,7 +259,6 @@ impl FuncDef {
          * 每个 block 之间通过 jump 连接
          * 所有的返回值都首先被分配到一个堆的变量 %retval 里
          */
-        println!("FuncDef: {}", self.ident);
         let func_ty = self.ty.generate_program(program, scopes);
         // 现阶段所有的参数都是 int 类型的
         let mut params_ty: Vec<Type> = Vec::new();
@@ -503,13 +500,8 @@ pub fn return_generate_program<'a>(
 }
 
 pub fn assign_generate_program(program: &mut Program, scopes: &mut Scopes, lval: &LVal, exp: &Exp) {
-    println!("Assgn {} {:?} = {:?}", lval.ident, lval.array_index, exp);
     let lval_value = lval.generate_program(program, scopes).unwrap_int_ptr();
-    let lkind = scopes.get_var_typekind(&lval_value, program);
-    println!("lkind: {}", lkind);
     let exp_value = exp.generate_program(program, scopes).unwrap_int(program, scopes);
-    let rkind = scopes.get_var_typekind(&exp_value, program);
-    println!("rkind: {}", rkind);
     let func_info = scopes.get_current_func().unwrap();
     let store_inst = func_info.new_value(program).store(exp_value, lval_value);
     func_info.push_inst(program, store_inst);
@@ -888,7 +880,6 @@ impl PrimaryExp {
 
 impl LVal {
     pub fn generate_program(&self, program: &mut Program, scopes: &mut Scopes) -> ExpResult {
-        println!("LVal: {}", self.ident);
         let var_value = scopes.get_value(&self.ident).cloned();
         match var_value {
             Some(VarValue::Const(x)) => {
@@ -908,7 +899,6 @@ impl LVal {
                 // 如果扒了皮还是Pointer就必须先 Load
                 let mut dims = 0;
                 let kind = scopes.get_var_typekind(&value, program);
-                println!("base kind: {}", kind);
                 match kind {
                     TypeKind::Pointer(base) => {
                         let mut now_ty = &base;
@@ -929,8 +919,6 @@ impl LVal {
                     }
                     _ => unreachable!(),
                 }
-                println!("The dims is {}", dims);
-                println!("The is_ptr is {}", is_ptr);
 
                 let mut now_value = value;
 
@@ -949,10 +937,7 @@ impl LVal {
                     let index_value = index.generate_program(program, scopes).unwrap_int(program, scopes);
                     let func_info = scopes.get_current_func().unwrap();
                     
-                    println!("entry_ty: {}", scopes.get_var_typekind(&ptr, program));
-
                     ptr = if is_ptr && count == 0 {
-                        println!("The FIRST ptr is {:?}", ptr);
                         let ptr_inst = func_info.new_value(program).get_ptr(ptr, index_value);
                         func_info.push_inst(program, ptr_inst);
                         ptr_inst
@@ -963,15 +948,12 @@ impl LVal {
                     };
                     count += 1;
 
-                    println!("end_ty: {}", scopes.get_var_typekind(&ptr, program));
-
                 }
 
 
 
                 if count == dims {
                     // 是一个一直 dereference 到 Int 的指针
-                    println!("The Int ptr is {:?}", ptr);
                     ExpResult::IntPtr(ptr)
                 } else {
                     // 是一个类似于数组参数一样的东西

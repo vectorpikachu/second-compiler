@@ -1,7 +1,7 @@
 //! 生成 RISCV 的汇编代码
 
 use koopa::ir::entities::ValueData;
-use koopa::ir::values::{Binary, Branch, Call, Jump, Load, Return, Store};
+use koopa::ir::values::{Binary, Branch, Call, GlobalAlloc, Jump, Load, Return, Store, ZeroInit};
 use koopa::ir::{BasicBlock, BinaryOp, Function, FunctionData, Program, Value, ValueKind};
 
 use super::function_info::FunctionInfo;
@@ -10,6 +10,10 @@ use std::cmp::max;
 use std::io::Write;
 
 use super::function_info::RealValue;
+
+use std::sync::atomic::{AtomicI32, Ordering};
+
+static GLOBAL_FUNC_ID: AtomicI32 = AtomicI32::new(0);
 
 /// 把所有的局部变量都放在栈上 + 寄存器上
 
@@ -36,6 +40,7 @@ impl GenerateAsm for Program {
             writeln!(buf, "  .globl {}", name).unwrap();
             writeln!(buf, "{}:", name).unwrap();
             value_data.generate_asm(buf, program_info);
+            writeln!(buf).unwrap();
         }
         
         // 我们对于当前的每个函数都生成汇编代码
@@ -43,6 +48,10 @@ impl GenerateAsm for Program {
             let func_info = FunctionInfo::new(func);
             program_info.set_current_func(func_info);
             self.func(func).generate_asm(buf, program_info);
+            if self.func(func).layout().entry_bb().is_none() {
+                continue;
+            }
+            writeln!(buf).unwrap();
         }
     }
 }
@@ -66,11 +75,11 @@ pub fn generate_prologue(
     writeln!(buf, "  .globl {}", func_name).unwrap();
     writeln!(buf, "{}:", func_name).unwrap();
     let func_info = program_info.get_current_func_mut().unwrap();
-
     // 应该先把 BasicBlock名 加入到函数信息中
     let func_name = function_data.name().strip_prefix("@").unwrap();
+    let func_id = GLOBAL_FUNC_ID.fetch_add(1, Ordering::SeqCst);
     for (bb, bb_data) in function_data.dfg().bbs() {
-        func_info.set_bb_name(*bb, bb_data.name().clone(), func_name.to_string());
+        func_info.set_bb_name(*bb, bb_data.name().clone(), func_name.to_string(), func_id);
     }
 
     /* 函数的返回地址保存在寄存器 ra 中.
@@ -122,6 +131,10 @@ pub fn generate_prologue(
 
     // 应该在计算完栈大小之后就为每个变量分配位置
 
+    if stack_size == 0 {
+        return;
+    }
+
     if stack_size <= 2048 {
         writeln!(buf, "  addi sp, sp, -{}", stack_size).unwrap();
     } else {
@@ -139,6 +152,9 @@ impl GenerateAsm for FunctionData {
     type Out = ();
     fn generate_asm(&self, buf: &mut Vec<u8>, program_info: &mut ProgramInfo) {
         /*
+         RISC-V 汇编中, 函数符号无需声明即可直接使用. 
+         关于到底去哪里找这些外部符号, 这件事情由链接器负责. 
+         除此之外, 调用库函数和调用 SysY 内定义的函数并无区别.
          Koopa IR 中, 函数声明是一种特殊的函数, 它们和函数定义是放在一起的.
          也就是说, 在上一节的基础上,
          你需要在扫描函数时跳过 Koopa IR 中的所有函数声明.
@@ -222,9 +238,16 @@ impl GenerateAsm for Value {
                     return RealValue::Const(num.value());
                 }
                 ValueKind::FuncArgRef(arg) => {
-                    let func_info = program_info.get_current_func_mut().unwrap();
-                    let offset = func_info.get_current_offset(self);
-                    return RealValue::StackPos(offset);
+                    // 当用到了 arg 的时候要判断它在寄存器里
+                    // 还是在 栈里
+                    let arg_index = arg.index();
+                    if arg_index < 8 {
+                        return RealValue::Reg(format!("a{}", arg_index));
+                    } else {
+                        let func_info = program_info.get_current_func_mut().unwrap();
+                        let stack_size = func_info.get_stack_size();
+                        return RealValue::StackPos(((arg_index - 8) * 4 + stack_size).try_into().unwrap());
+                    }
                 }
                 _ => {
                     let func_info = program_info.get_current_func_mut().unwrap();
@@ -260,7 +283,7 @@ impl GenerateAsm for ValueData {
                 store.generate_asm(buf, program_info);
             }
             ValueKind::Load(load) => {
-                let v = load.generate_asm(buf, program_info);
+                load.generate_asm(buf, program_info);
             }
             ValueKind::Binary(binary) => {
                 binary.generate_asm(buf, program_info);
@@ -271,6 +294,29 @@ impl GenerateAsm for ValueData {
             ValueKind::Call(call) => {
                 call.generate_asm(buf, program_info);
             }
+            ValueKind::ZeroInit(_zero_init) => {
+                println!("zero init");
+                writeln!(buf, "  .zero {}", self.ty().size()).unwrap();
+            }
+            ValueKind::Aggregate(aggregate) => {
+                println!("aggregate");
+            }
+            ValueKind::GetElemPtr(get_elem_ptr) => {
+                println!("get element ptr");
+            }
+            ValueKind::GetPtr(get_ptr) => {
+                println!("get ptr");
+            }
+            ValueKind::BlockArgRef(block_arg_ref) => {
+                println!("block arg ref");
+            }
+            ValueKind::FuncArgRef(func_arg_ref) => {
+                println!("func arg ref");
+            }
+            ValueKind::GlobalAlloc(global_alloc) => {
+                global_alloc.generate_asm(buf, program_info);
+                println!("global alloc");
+            }
             _ => unimplemented!(),
         }
     }
@@ -280,6 +326,12 @@ impl GenerateAsm for Return {
     type Out = ();
 
     fn generate_asm(&self, buf: &mut Vec<u8>, program_info: &mut ProgramInfo) {
+        if self.value().is_none() {
+            // 没有返回值
+            // 直接就返回啦！
+            generate_epilogue(buf, program_info);
+            return;
+        }
         let val = self.value().unwrap();
         let is_unit = program_info
             .get_program()
@@ -305,7 +357,8 @@ impl GenerateAsm for Return {
                 writeln!(buf, "  mv a0, {}", reg).unwrap();
             }
             RealValue::DataSeg(name) => {
-                writeln!(buf, "  la a0, {}", name).unwrap();
+                writeln!(buf, "  la t0, {}", name).unwrap();
+                writeln!(buf, "  lw a0, 0(t0)").unwrap();
             }
             RealValue::None => {}
         }
@@ -320,8 +373,15 @@ impl GenerateAsm for Return {
 pub fn generate_epilogue(buf: &mut Vec<u8>, program_info: &mut ProgramInfo) {
     let func_info = program_info.get_current_func().unwrap();
     let stack_size = func_info.get_stack_size();
+
+    if stack_size == 0 {
+        writeln!(buf, "  ret").unwrap();
+        writeln!(buf).unwrap();
+        return;
+    }
+
     if func_info.get_call_flag() {
-        writeln!(buf, "  lw ra, {}(sp)", stack_size).unwrap();
+        writeln!(buf, "  lw ra, {}(sp)", stack_size - 4).unwrap();
     }
     if stack_size <= 2047 {
         writeln!(buf, "  addi sp, sp, {}", stack_size).unwrap();
@@ -330,7 +390,6 @@ pub fn generate_epilogue(buf: &mut Vec<u8>, program_info: &mut ProgramInfo) {
         writeln!(buf, "  add sp, sp, t0").unwrap();
     }
     writeln!(buf, "  ret").unwrap();
-    writeln!(buf).unwrap();
 }
 
 impl GenerateAsm for Load {
@@ -352,6 +411,7 @@ impl GenerateAsm for Load {
             }
             RealValue::DataSeg(name) => {
                 writeln!(buf, "  la t0, {}", name).unwrap();
+                writeln!(buf, "  lw t0, 0(t0)").unwrap();
                 RealValue::Reg("t0".to_string())
             }
             RealValue::None => {
@@ -383,6 +443,7 @@ impl GenerateAsm for Store {
             }
             RealValue::DataSeg(name) => {
                 writeln!(buf, "  la t0, {}", name).unwrap();
+                writeln!(buf, "  lw t0, 0(t0)").unwrap();
             }
             RealValue::None => {
                 panic!("Store src is None")
@@ -400,7 +461,8 @@ impl GenerateAsm for Store {
                 }
             }
             RealValue::DataSeg(name) => {
-                writeln!(buf, "  la {}, t0", name).unwrap();
+                writeln!(buf, "  la t1, {}", name).unwrap();
+                writeln!(buf, "  sw t0, 0(t1)").unwrap();
             }
             RealValue::None => {
                 panic!("Store dest is None")
@@ -517,15 +579,16 @@ impl GenerateAsm for Call {
         // 存放参数
         let args = self.args();
         let mut arg_count = 0;
-        for arg in args.iter().rev() {
+        for arg in args.iter() {
             let arg = arg.generate_asm(buf, program_info);
-            arg.load_value(buf, program_info, format!("a{}", arg_count));
-            arg_count += 1;
-            if arg_count > 8 {
+            if arg_count < 8 {
+                arg.load_value(buf, program_info, format!("a{}", arg_count));
+            } else {
                 // 存入栈中
                 arg.load_value(buf, program_info, "t0".to_string());
                 writeln!(buf, "  sw t0, {}(sp)", (arg_count - 8) * 4).unwrap();
             }
+            arg_count += 1;
         }
 
         let callee = self.callee().generate_asm(buf, program_info);
@@ -533,6 +596,74 @@ impl GenerateAsm for Call {
 
         RealValue::Reg("a0".to_string())
     }
+}
+
+
+impl GenerateAsm for GlobalAlloc {
+    type Out = ();
+    fn generate_asm(&self, buf: &mut Vec<u8>, program_info: &mut ProgramInfo) -> Self::Out {
+            let kind = program_info.get_program().borrow_value(self.init()).kind().clone();
+            
+            // ? 这样做是为了避免引用不可变的引用.
+
+            match kind {
+                ValueKind::Return(val) => {
+                    val.generate_asm(buf, program_info);
+                }
+                ValueKind::Integer(num) => {
+                    // 应该处理 local 的 integer 只会在 Value里面处理
+                    // 这里应该要处理一个全局的 integer
+                    writeln!(buf, "  .word {}", num.value()).unwrap();
+                }
+                ValueKind::Jump(dest) => {
+                    dest.generate_asm(buf, program_info);
+                }
+                ValueKind::Alloc(_alloc) => {
+                    // 对于 alloc 语句, 应该在一开始计算 stack size 的时候就分配好
+                    // alloc 做的事情是在 ValueData 里加入了一个新的 Value
+                }
+                ValueKind::Store(store) => {
+                    store.generate_asm(buf, program_info);
+                }
+                ValueKind::Load(load) => {
+                    load.generate_asm(buf, program_info);
+                }
+                ValueKind::Binary(binary) => {
+                    binary.generate_asm(buf, program_info);
+                }
+                ValueKind::Branch(branch) => {
+                    branch.generate_asm(buf, program_info);
+                }
+                ValueKind::Call(call) => {
+                    call.generate_asm(buf, program_info);
+                }
+                ValueKind::ZeroInit(_) => {
+                    println!("zero init");
+                    let size = program_info.get_program().borrow_value(self.init()).ty().size();
+                    writeln!(buf, "  .zero {}", size).unwrap();
+                }
+                ValueKind::Aggregate(aggregate) => {
+                    println!("aggregate");
+                }
+                ValueKind::GetElemPtr(get_elem_ptr) => {
+                    println!("get element ptr");
+                }
+                ValueKind::GetPtr(get_ptr) => {
+                    println!("get ptr");
+                }
+                ValueKind::BlockArgRef(block_arg_ref) => {
+                    println!("block arg ref");
+                }
+                ValueKind::FuncArgRef(func_arg_ref) => {
+                    println!("func arg ref");
+                }
+                ValueKind::GlobalAlloc(global_alloc) => {
+                    global_alloc.generate_asm(buf, program_info);
+                    println!("global alloc");
+                }
+                _ => unimplemented!(),
+            }
+        }
 }
 
 impl RealValue {
@@ -556,7 +687,8 @@ impl RealValue {
                 reg
             }
             RealValue::DataSeg(name) => {
-                writeln!(buf, "  la {}, {}", reg, name).unwrap();
+                writeln!(buf, "  la t0, {}", name).unwrap();
+                writeln!(buf, "  lw {}, 0(t0)", reg).unwrap();
                 reg
             }
             RealValue::None => {
