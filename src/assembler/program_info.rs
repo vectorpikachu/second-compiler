@@ -29,7 +29,8 @@ impl<'a> ProgramInfo<'a> {
     ///
     /// # 返回值
     /// 返回一个 `Program` 类型的引用，该引用指向实例内部的程序对象
-    pub fn get_program(&self) -> &Program {
+    /// 我改变这个的生命周期为 'a
+    pub fn get_program(&self) -> &'a Program {
         self.program
     }
 

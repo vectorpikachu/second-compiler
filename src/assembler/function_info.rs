@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 
-use koopa::ir::{BasicBlock, Function, Value};
+use koopa::ir::{entities::ValueData, BasicBlock, Function, TypeKind, Value, ValueKind};
 
 #[derive(Debug, Clone)]
 pub enum RealValue {
     Const(i32),
     StackPos(i32), // 后面是偏移
+    Pointer(i32), // 是一个指针, sp + offset
     Reg(String), // 寄存器
     DataSeg(String), // .data 上的变量
     None,
@@ -17,7 +18,7 @@ pub struct FunctionInfo {
     now_id: usize,
     stack_size: usize,
     call_flag: bool,
-    alloc_offset: HashMap<Value, i32>,
+    alloc_offset: HashMap<Value, (i32, bool)>, // 分别表示 offset 和是否是指针
     current_offset: i32,
     real_value: HashMap<Value, RealValue>,
 }
@@ -67,15 +68,39 @@ impl FunctionInfo {
         self.stack_size = size;
     }
 
-    pub fn get_current_offset(&mut self, value: &Value) -> i32 {
+    pub fn get_current_offset(&mut self, value: &Value, value_data: &ValueData) -> i32 {
         match self.alloc_offset.get(value) {
-            Some(offset) => *offset,
+            Some(offset) => offset.0,
             None => {
-                self.alloc_offset.insert(*value, self.current_offset);
-                self.current_offset += 4;
-                self.current_offset - 4
+                let offset = self.current_offset;
+                self.allocate_offset(value, value_data);
+                offset
             }
         }
+    }
+
+    pub fn is_ptr(&self, value: &Value) -> bool {
+        match self.alloc_offset.get(value) {
+            Some(offset) => offset.1,
+            None => false,
+        }
+    }
+
+    pub fn allocate_offset(&mut self, value: &Value, value_data: &ValueData) {
+        match value_data.kind() {
+            ValueKind::Alloc(_) => {
+              self.alloc_offset.insert(*value, (self.current_offset, false));
+              self.current_offset += match value_data.ty().kind() {
+                TypeKind::Pointer(base) => base.size() as i32,
+                _ => unreachable!(),
+              };
+            }
+            _ => {
+              let is_ptr = matches!(value_data.ty().kind(), TypeKind::Pointer(_));
+              self.alloc_offset.insert(*value, (self.current_offset, is_ptr));
+              self.current_offset += value_data.ty().size() as i32;
+            }
+          };
     }
 
     pub fn set_current_offset(&mut self, offset: i32) {
@@ -90,7 +115,7 @@ impl FunctionInfo {
         self.call_flag
     }
 
-    pub fn get_allocs(&self) -> &HashMap<Value, i32> {
+    pub fn get_allocs(&self) -> &HashMap<Value, (i32, bool)> {
         &self.alloc_offset
     }
 
