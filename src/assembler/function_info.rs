@@ -103,6 +103,18 @@ impl FunctionInfo {
         }
     }
 
+    pub fn is_alloc_array(&self, value: &Value) -> bool {
+       match self.alloc_offset.get(value) {
+           Some(offset) => {
+                match offset.1.kind() {
+                    TypeKind::Array(_, _) => true,
+                    _ => false,
+                }
+           }
+           None => false
+       }
+    }
+
     /// 设置 alloc 的偏移
     pub fn set_alloc_offset(&mut self, value: Value, type_kind: TypeKind) {
         let size = match type_kind {

@@ -296,14 +296,9 @@ impl GenerateAsm for Value {
                 _ => {
                     let func_info = program_info.get_current_func_mut().unwrap();
                     let option_alloc = func_info.get_alloc_offset(self);
+                    let is_array = func_info.is_alloc_array(self);
 
-                    let is_ptr = match value_data.kind() {
-                        ValueKind::GetElemPtr(_) => true,
-                        _ => false,
-                    };
-
-                    if option_alloc.is_some() {
-                        println!("{:?}", value_data.kind());
+                    if option_alloc.is_some() && is_array{
                         return RealValue::Array(option_alloc.unwrap());
                     }
                     let offset = func_info.get_current_offset(self);
