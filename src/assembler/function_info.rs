@@ -1,13 +1,15 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt::Debug};
 
-use koopa::ir::{BasicBlock, Function, Value};
+use koopa::ir::{BasicBlock, Function, Type, TypeKind, Value};
 
 #[derive(Debug, Clone)]
 pub enum RealValue {
     Const(i32),
     StackPos(i32), // 后面是偏移
+    Pointer(i32), // 指针
     Reg(String), // 寄存器
     DataSeg(String), // .data 上的变量
+    Array(i32),
     None,
 }
 
@@ -17,8 +19,10 @@ pub struct FunctionInfo {
     now_id: usize,
     stack_size: usize,
     call_flag: bool,
-    alloc_offset: HashMap<Value, i32>,
+    inst_offset: HashMap<Value, i32>,
+    alloc_offset: HashMap<Value, (i32, Type)>,
     current_offset: i32,
+    all_types: HashMap<Value, Type>, // 存放需要的数组类型
     real_value: HashMap<Value, RealValue>,
 }
 
@@ -30,8 +34,10 @@ impl FunctionInfo {
             now_id: 0,
             stack_size: 0,
             call_flag: false,
+            inst_offset: HashMap::new(),
             alloc_offset: HashMap::new(),
             current_offset: 0,
+            all_types: HashMap::new(),
             real_value: HashMap::new(),
         }
     }
@@ -68,18 +74,62 @@ impl FunctionInfo {
     }
 
     pub fn get_current_offset(&mut self, value: &Value) -> i32 {
-        match self.alloc_offset.get(value) {
+        match self.inst_offset.get(value) {
             Some(offset) => *offset,
             None => {
-                self.alloc_offset.insert(*value, self.current_offset);
+                self.inst_offset.insert(*value, self.current_offset);
                 self.current_offset += 4;
                 self.current_offset - 4
             }
         }
     }
 
+    pub fn get_inst_offset(&self, value: &Value) -> Option<i32> {
+        match self.inst_offset.get(value) {
+            Some(offset) => Some(*offset),
+            None => None
+        }
+    }
+
     pub fn set_current_offset(&mut self, offset: i32) {
         self.current_offset = offset;
+    }
+
+    /// 返回 alloc 的偏移
+    pub fn get_alloc_offset(&self, value: &Value) -> Option<i32> {
+        match self.alloc_offset.get(value) {
+            Some(offset) => Some(offset.0),
+            None => None
+        }
+    }
+
+    /// 设置 alloc 的偏移
+    pub fn set_alloc_offset(&mut self, value: Value, type_kind: TypeKind) {
+        let size = match type_kind {
+            TypeKind::Int32 => 4,
+            TypeKind::Pointer(base) => {
+                self.alloc_offset.insert(value, (self.current_offset, base.clone()));
+                base.size()
+            }
+            _ => 4,
+        };
+        self.current_offset += size as i32;
+    }
+
+    /// 得到 alloc 的大小
+    pub fn get_alloc_type_kind(&self, value: &Value) -> Option<&Type> {
+        match self.alloc_offset.get(value) {
+            Some(offset) => Some(&offset.1),
+            None => None,
+        }
+    }
+
+    pub fn insert_type(&mut self, value: Value, ty: Type) {
+        self.all_types.insert(value, ty);
+    }
+
+    pub fn get_type(&self, value: &Value) -> Option<&Type> {
+        self.all_types.get(value)
     }
 
     pub fn set_call_flag(&mut self, flag: bool) {
@@ -88,10 +138,6 @@ impl FunctionInfo {
 
     pub fn get_call_flag(&self) -> bool {
         self.call_flag
-    }
-
-    pub fn get_allocs(&self) -> &HashMap<Value, i32> {
-        &self.alloc_offset
     }
 
     pub fn get_real_value(&self, value: &Value) -> RealValue {
@@ -106,3 +152,4 @@ impl FunctionInfo {
     }
 
 }
+

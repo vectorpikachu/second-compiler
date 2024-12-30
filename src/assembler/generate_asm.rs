@@ -1,21 +1,24 @@
 //! 生成 RISCV 的汇编代码
 
 use koopa::ir::entities::ValueData;
-use koopa::ir::values::{Aggregate, Binary, Branch, Call, GlobalAlloc, Jump, Load, Return, Store, ZeroInit};
-use koopa::ir::{BasicBlock, BinaryOp, Function, FunctionData, Program, Value, ValueKind};
+use koopa::ir::values::{Aggregate, Binary, Branch, Call, GetElemPtr, GlobalAlloc, Jump, Load, Return, Store, ZeroInit};
+use koopa::ir::{BasicBlock, BinaryOp, Function, FunctionData, Program, Type, TypeKind, Value, ValueKind};
 
 use super::function_info::FunctionInfo;
 use super::program_info::ProgramInfo;
 use core::borrow;
 use std::any::Any;
 use std::cmp::max;
+use std::fmt::Pointer;
 use std::io::Write;
 
 use super::function_info::RealValue;
 
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicPtr, Ordering};
 
 static GLOBAL_FUNC_ID: AtomicI32 = AtomicI32::new(0);
+
+static GLOBAL_NOW_TYPE: AtomicPtr<Type> = AtomicPtr::new(std::ptr::null_mut());
 
 /// 把所有的局部变量都放在栈上 + 寄存器上
 
@@ -100,6 +103,7 @@ pub fn generate_prologue(
     let mut stack_size = 0;
     let mut max_len = 0;
     let mut call_flag = false;
+    let mut alloc_size = 0;
 
     for (_bb, node) in function_data.layout().bbs() {
         for inst in node.insts().keys() {
@@ -112,6 +116,13 @@ pub fn generate_prologue(
                     call_flag = true;
                     max_len = max(max_len, call.args().len());
                 }
+                ValueKind::Alloc(_) => {
+                    let size = match value.ty().kind() {
+                        TypeKind::Pointer(base) => base.size(),
+                        _ => 4,
+                    };
+                    alloc_size += size;
+                }
                 _ => {}
             }
         }
@@ -123,8 +134,22 @@ pub fn generate_prologue(
     }
 
     let args_size = max(max_len as i64 - 8, 0) * 4;
-    stack_size += args_size;
+    stack_size += args_size as i32;
     func_info.set_current_offset(args_size as i32);
+
+    // 接下来分配所有的 alloc
+    for (value, _) in function_data.dfg().values() {
+        let value_data = function_data.dfg().value(*value);
+        if let ValueKind::Alloc(_alloc) = value_data.kind() {
+            let size = match value_data.ty().kind() {
+                TypeKind::Pointer(base) => base.size(),
+                _ => 4,
+            };
+            func_info.set_alloc_offset(*value, value_data.ty().kind().clone());
+        }
+    }
+
+    stack_size += alloc_size as i32;
 
     // 对齐到 16 字节
     stack_size = (stack_size + 15) / 16 * 16;
@@ -146,7 +171,7 @@ pub fn generate_prologue(
 
     // 保存 ra 寄存器
     if call_flag {
-        writeln!(buf, "  sw ra, {}(sp)", stack_size - 4).unwrap();
+        store_to_stack(buf, "ra".to_string(), stack_size - 4);
     }
 }
 
@@ -192,10 +217,10 @@ impl GenerateAsm for FunctionData {
                         let offset = func_info.get_current_offset(inst);
                         match value_data.kind() {
                             ValueKind::Call(_) => {
-                                writeln!(buf, "  sw a0, {}(sp)", offset).unwrap();
+                                store_to_stack(buf, "a0".to_string(), offset);
                             }
                             _ => {
-                                writeln!(buf, "  sw t0, {}(sp)", offset).unwrap();
+                                store_to_stack(buf, "t0".to_string(), offset);
                             }
                         }
                     }
@@ -270,7 +295,26 @@ impl GenerateAsm for Value {
                 }
                 _ => {
                     let func_info = program_info.get_current_func_mut().unwrap();
+                    let option_alloc = func_info.get_alloc_offset(self);
+
+                    let is_ptr = match value_data.kind() {
+                        ValueKind::GetElemPtr(_) => true,
+                        _ => false,
+                    };
+
+                    if option_alloc.is_some() {
+                        println!("{:?}", value_data.kind());
+                        return RealValue::Array(option_alloc.unwrap());
+                    }
                     let offset = func_info.get_current_offset(self);
+
+                    // 把类型存入, 如果是get_elem_ptr的话
+                    if let ValueKind::GetElemPtr(_) = value_data.kind() {
+                        let now_ty = GLOBAL_NOW_TYPE.load(Ordering::SeqCst);
+                        func_info.insert_type(*self, unsafe { (*now_ty).clone() });
+                        return RealValue::Pointer(offset);
+                    }
+
                     return RealValue::StackPos(offset);
                 }
             }
@@ -321,7 +365,9 @@ impl GenerateAsm for ValueData {
                 aggregate.generate_asm(buf, program_info);
             }
             ValueKind::GetElemPtr(get_elem_ptr) => {
-                println!("get element ptr");
+                println!("get element ptr1");
+                let ty = get_elem_ptr.generate_asm(buf, program_info);
+                GLOBAL_NOW_TYPE.store(Box::into_raw(Box::new(ty)), Ordering::SeqCst);
             }
             ValueKind::GetPtr(get_ptr) => {
                 println!("get ptr");
@@ -370,7 +416,7 @@ impl GenerateAsm for Return {
                 writeln!(buf, "  li a0, {}", num).unwrap();
             }
             RealValue::StackPos(offset) => {
-                writeln!(buf, "  lw a0, {}(sp)", offset).unwrap();
+                load_from_stack(buf, "a0".to_string(), offset);
             }
             RealValue::Reg(reg) => {
                 writeln!(buf, "  mv a0, {}", reg).unwrap();
@@ -379,7 +425,7 @@ impl GenerateAsm for Return {
                 writeln!(buf, "  la t0, {}", name).unwrap();
                 writeln!(buf, "  lw a0, 0(t0)").unwrap();
             }
-            RealValue::None => {}
+            _ => {}
         }
 
         /*函数返回前, 即 ret 指令之前, 你需要生成复原栈指针的指令, 将栈指针加上 S'
@@ -400,7 +446,7 @@ pub fn generate_epilogue(buf: &mut Vec<u8>, program_info: &mut ProgramInfo) {
     }
 
     if func_info.get_call_flag() {
-        writeln!(buf, "  lw ra, {}(sp)", stack_size - 4).unwrap();
+        load_from_stack(buf, "ra".to_string(), (stack_size - 4) as i32);
     }
     if stack_size <= 2047 {
         writeln!(buf, "  addi sp, sp, {}", stack_size).unwrap();
@@ -421,7 +467,7 @@ impl GenerateAsm for Load {
                 RealValue::Reg("t0".to_string())
             }
             RealValue::StackPos(offset) => {
-                writeln!(buf, "  lw t0, {}(sp)", offset).unwrap();
+                load_from_stack(buf, "t0".to_string(), offset);
                 RealValue::Reg("t0".to_string())
             }
             RealValue::Reg(reg) => {
@@ -433,7 +479,17 @@ impl GenerateAsm for Load {
                 writeln!(buf, "  lw t0, 0(t0)").unwrap();
                 RealValue::Reg("t0".to_string())
             }
-            RealValue::None => {
+            RealValue::Array(offset) => {
+                load_from_stack(buf, "t1".to_string(), offset);
+                writeln!(buf, "  lw t0, 0(t1)").unwrap();
+                RealValue::Reg("t0".to_string())
+            }
+            RealValue::Pointer(offset) => {
+                load_from_stack(buf, "t1".to_string(), offset);
+                writeln!(buf, "  lw t0, 0(t1)").unwrap();
+                RealValue::Reg("t0".to_string())
+            }
+            _ => {
                 panic!("Load src is None")
             }
         };
@@ -453,7 +509,7 @@ impl GenerateAsm for Store {
                 writeln!(buf, "  li t0, {}", num).unwrap();
             }
             RealValue::StackPos(offset) => {
-                writeln!(buf, "  lw t0, {}(sp)", offset).unwrap();
+                load_from_stack(buf, "t0".to_string(), offset);
             }
             RealValue::Reg(reg) => {
                 if reg != "t0".to_string() {
@@ -464,7 +520,11 @@ impl GenerateAsm for Store {
                 writeln!(buf, "  la t0, {}", name).unwrap();
                 writeln!(buf, "  lw t0, 0(t0)").unwrap();
             }
-            RealValue::None => {
+            RealValue::Pointer(offset) => {
+                load_from_stack(buf, "t1".to_string(), offset);
+                writeln!(buf, "  lw t0, 0(t1)").unwrap();
+            }
+            _ => {
                 panic!("Store src is None")
             }
         }
@@ -472,7 +532,7 @@ impl GenerateAsm for Store {
         // 再把 t0 放到 dest_val 中
         match dest_val {
             RealValue::StackPos(offset) => {
-                writeln!(buf, "  sw t0, {}(sp)", offset).unwrap();
+                store_to_stack(buf, "t0".to_string(), offset);
             }
             RealValue::Reg(reg) => {
                 if reg != "t0".to_string() {
@@ -485,6 +545,15 @@ impl GenerateAsm for Store {
             }
             RealValue::None => {
                 panic!("Store dest is None")
+            }
+            RealValue::Array(offset) => {
+                // 我发现 Array = 一个 Pointer 类似的东西
+                load_from_stack(buf, "t1".to_string(), offset);
+                writeln!(buf, "  sw t0, 0(t1)").unwrap();
+            }
+            RealValue::Pointer(offset) => {
+                load_from_stack(buf, "t1".to_string(), offset);
+                writeln!(buf, "  sw t0, 0(t1)").unwrap();
             }
             _ => {}
         }
@@ -605,7 +674,7 @@ impl GenerateAsm for Call {
             } else {
                 // 存入栈中
                 arg.load_value(buf, program_info, "t0".to_string());
-                writeln!(buf, "  sw t0, {}(sp)", (arg_count - 8) * 4).unwrap();
+                store_to_stack(buf, "t0".to_string(), (arg_count - 8) * 4);
             }
             arg_count += 1;
         }
@@ -637,6 +706,10 @@ impl GenerateAsm for GlobalAlloc {
 
 impl GenerateAsm for ValueKind {
     type Out = ();
+
+
+    /// 这个是为了 GlobalAlloc 服务的
+    /// 所以不会碰到 getelemptr
     fn generate_asm(&self, buf: &mut Vec<u8>, program_info: &mut ProgramInfo) -> Self::Out {
         match self {
             ValueKind::Return(val) => {
@@ -676,7 +749,7 @@ impl GenerateAsm for ValueKind {
                 aggregate.generate_asm(buf, program_info);
             }
             ValueKind::GetElemPtr(get_elem_ptr) => {
-                println!("get element ptr");
+                println!("get element ptr2");
             }
             ValueKind::GetPtr(get_ptr) => {
                 println!("get ptr");
@@ -709,11 +782,57 @@ impl GenerateAsm for Aggregate {
                 RealValue::Reg(r) => {
                     let func_info = program_info.get_current_func_mut().unwrap();
                     let offset = func_info.get_current_offset(elem);
-                    writeln!(buf, "  sw {}, {}(sp)", r, offset).unwrap();
+                    store_to_stack(buf, r, offset);
                 }
                 _ => {}
             }
         }
+    }
+}
+
+impl GenerateAsm for GetElemPtr {
+    type Out = Type;
+    fn generate_asm(&self, buf: &mut Vec<u8>, program_info: &mut ProgramInfo) -> Self::Out {
+        let ptr = self.src().generate_asm(buf, program_info);
+        let index = self.index().generate_asm(buf, program_info);
+
+        // 第一步, 计算 @arr 的地址
+        // addi t0, sp, offset
+        println!("找到了: {:?}\n\n", ptr);
+        ptr.calc_arr_addr(buf, program_info, "t0".to_string());
+        // 第二步, 计算 getelemptr 的偏移量
+        // li t1, index
+        // li t2, size
+        // mul t1, t1, t2
+        // add t0, t0, t1
+        index.load_value(buf, program_info, "t1".to_string());
+        let func_info = program_info.get_current_func().unwrap();
+        let all_ty = match ptr {
+            RealValue::Array(_) => {
+                func_info.get_alloc_type_kind(&self.src()).unwrap().clone()
+            }
+            RealValue::StackPos(_) => {
+                func_info.get_type(&self.src()).unwrap().clone()
+            }
+            RealValue::Pointer(_) => {
+                func_info.get_type(&self.src()).unwrap().clone()
+            }
+            RealValue::DataSeg(_) => {
+                program_info.get_value_type(self.src())
+            }
+            _ => {
+                panic!("GetElemPtr src is None")
+            }
+        };
+
+        let elem_ty = match all_ty.kind() {
+            TypeKind::Array(b, _l) => b.clone(),
+            _ => all_ty,
+        };
+        writeln!(buf, "  li t2, {}", elem_ty.size()).unwrap();
+        writeln!(buf, "  mul t1, t1, t2").unwrap();
+        writeln!(buf, "  add t0, t0, t1").unwrap();
+        elem_ty.clone()
     }
 }
 
@@ -734,7 +853,7 @@ impl RealValue {
                 reg
             }
             RealValue::StackPos(offset) => {
-                writeln!(buf, "  lw {}, {}(sp)", reg, offset).unwrap();
+                load_from_stack(buf, reg.clone(), *offset);
                 reg
             }
             RealValue::DataSeg(name) => {
@@ -745,7 +864,71 @@ impl RealValue {
             RealValue::None => {
                 panic!("RealValue is None")
             }
+            RealValue::Array(offset) => {
+                println!("Array offset: {}", offset);
+                load_from_stack(buf, reg.clone(), *offset);
+                reg
+            }
+            _ => {
+                panic!("RealValue is None")
+            }
+        }
+    }
+
+    pub fn calc_arr_addr(
+        &self,
+        buf: &mut Vec<u8>,
+        _program_info: &ProgramInfo,
+        reg: String,
+    ) {
+        match self {
+            RealValue::Array(offset) => {
+                if *offset <= 2047 && *offset >= -2048 {
+                    writeln!(buf, "  addi {}, sp, {}", reg, offset).unwrap();
+                } else {
+                    writeln!(buf, "  li t0, {}", offset).unwrap();
+                    writeln!(buf, "  add {}, sp, t0", reg).unwrap();
+                }
+            }
+            RealValue::StackPos(offset) => {
+                load_from_stack(buf, reg.clone(), *offset);
+            }
+            RealValue::Pointer(offset) => {
+                load_from_stack(buf, reg.clone(), *offset);
+            }
+            RealValue::DataSeg(name) => {
+                writeln!(buf, "  la {}, {}", reg, name).unwrap();
+            }
+            _ => {}
         }
     }
     
+}
+
+pub fn load_from_stack(
+    buf: &mut Vec<u8>,
+    reg: String,
+    offset: i32,
+) {
+    if offset <= 2047 && offset >= -2048 {
+        writeln!(buf, "  lw {}, {}(sp)", reg, offset).unwrap();
+    } else {
+        writeln!(buf, "  li t1, {}", offset).unwrap();
+        writeln!(buf, "  add t1, sp, t1").unwrap();
+        writeln!(buf, "  lw {}, 0(t1)", reg).unwrap();
+    }   
+}
+
+pub fn store_to_stack(
+    buf: &mut Vec<u8>,
+    reg: String,
+    offset: i32,
+) {
+    if offset <= 2047 && offset >= -2048 {
+        writeln!(buf, "  sw {}, {}(sp)", reg, offset).unwrap();
+    } else {
+        writeln!(buf, "  li t1, {}", offset).unwrap();
+        writeln!(buf, "  add t1, sp, t1").unwrap();
+        writeln!(buf, "  sw {}, 0(t1)", reg).unwrap();
+    }
 }
