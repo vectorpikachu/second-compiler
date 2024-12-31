@@ -1,4 +1,4 @@
-global @ga = alloc [i32, 10], zeroinit
+global @ga = alloc [i32, 3], zeroinit
 global @gb = alloc [[i32, 3], 2], {{5, 6, 7}, {8, 0, 0}}
 
 decl @getint(): i32
@@ -20,11 +20,9 @@ decl @stoptime()
 fun @main(): i32 {
 %entry:
   %retval = alloc i32
-  @a = alloc [i32, 10]
+  @a = alloc [i32, 3]
   @b = alloc [[i32, 3], 2]
   @sum = alloc i32
-  @i = alloc i32
-  @j = alloc i32
   jump %0
 
 %0:
@@ -43,85 +41,32 @@ fun @main(): i32 {
   %8 = getelemptr %5, 2
   store 0, %8
   store 0, @sum
-  store 0, @i
-  jump %while_entry
-
-%while_entry:
-  %9 = load @i
-  %10 = lt %9, 2
-  br %10, %while_body, %while_exit
-
-%while_body:
-  store 0, @j
-  jump %while_entry_0
-
-%while_entry_0:
-  %11 = load @j
-  %12 = lt %11, 3
-  br %12, %while_body_0, %while_exit_0
-
-%while_body_0:
-  %13 = load @i
-  %14 = getelemptr @b, %13
-  %15 = load @j
-  %16 = getelemptr %14, %15
+  %9 = getelemptr @a, 0
+  store 5, %9
+  %10 = getelemptr @b, 1
+  %11 = getelemptr %10, 2
+  %12 = getelemptr @a, 0
+  %13 = load %11
+  %14 = load %12
+  %15 = add %13, %14
+  store %15, @sum
+  %16 = getelemptr @ga, 0
   %17 = load @sum
   %18 = load %16
   %19 = add %17, %18
-  %20 = load @i
-  %21 = getelemptr @gb, %20
-  %22 = load @j
-  %23 = getelemptr %21, %22
-  %24 = load %23
-  %25 = add %19, %24
-  store %25, @sum
-  %26 = load @j
-  %27 = add %26, 1
-  store %27, @j
-  jump %while_entry_0
-
-%while_exit_0:
-  %28 = load @i
-  %29 = add %28, 1
-  store %29, @i
-  jump %while_entry
-
-%while_exit:
-  store 0, @i
-  jump %while_entry_1
-
-%while_entry_1:
-  %30 = load @i
-  %31 = lt %30, 10
-  br %31, %while_body_1, %while_exit_1
-
-%while_body_1:
-  %32 = load @i
-  %33 = getelemptr @a, %32
-  %34 = load @sum
-  %35 = load @i
-  %36 = add %34, %35
-  store %36, %33
-  %37 = load @i
-  %38 = getelemptr @ga, %37
-  %39 = load @sum
-  %40 = load @i
-  %41 = add %39, %40
-  store %41, %38
-  %42 = load @i
-  %43 = add %42, 1
-  store %43, @i
-  jump %while_entry_1
-
-%while_exit_1:
-  %44 = load @sum
-  store %44, %retval
+  %20 = getelemptr @gb, 1
+  %21 = getelemptr %20, 2
+  %22 = load %21
+  %23 = add %19, %22
+  store %23, @sum
+  %24 = load @sum
+  store %24, %retval
   jump %exit
 
-%45:
+%25:
   jump %exit
 
 %exit:
-  %46 = load %retval
-  ret %46
+  %26 = load %retval
+  ret %26
 }

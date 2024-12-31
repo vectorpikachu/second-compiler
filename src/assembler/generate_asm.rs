@@ -1,15 +1,12 @@
 //! 生成 RISCV 的汇编代码
 
 use koopa::ir::entities::ValueData;
-use koopa::ir::values::{Aggregate, Binary, Branch, Call, GetElemPtr, GlobalAlloc, Jump, Load, Return, Store, ZeroInit};
+use koopa::ir::values::{Aggregate, Binary, Branch, Call, GetElemPtr, GlobalAlloc, Jump, Load, Return, Store};
 use koopa::ir::{BasicBlock, BinaryOp, Function, FunctionData, Program, Type, TypeKind, Value, ValueKind};
 
 use super::function_info::FunctionInfo;
 use super::program_info::ProgramInfo;
-use core::borrow;
-use std::any::Any;
 use std::cmp::max;
-use std::fmt::Pointer;
 use std::io::Write;
 
 use super::function_info::RealValue;
@@ -793,7 +790,6 @@ impl GenerateAsm for GetElemPtr {
 
         // 第一步, 计算 @arr 的地址
         // addi t0, sp, offset
-        println!("找到了: {:?}\n\n", ptr);
         ptr.calc_arr_addr(buf, program_info, "t0".to_string());
         // 第二步, 计算 getelemptr 的偏移量
         // li t1, index
@@ -812,8 +808,15 @@ impl GenerateAsm for GetElemPtr {
             RealValue::Pointer(_) => {
                 func_info.get_type(&self.src()).unwrap().clone()
             }
-            RealValue::DataSeg(_) => {
-                program_info.get_value_type(self.src())
+            RealValue::DataSeg(n) => {
+                let ty = program_info.get_value_type(self.src());
+                // 得到还是一个指针必须扒皮
+                let ty = match ty.kind() {
+                    TypeKind::Pointer(b) => b.clone(),
+                    _ => ty,
+                };
+                println!("name: {}, type: {:?}", n, ty);
+                ty.clone()
             }
             _ => {
                 panic!("GetElemPtr src is None")
@@ -824,6 +827,7 @@ impl GenerateAsm for GetElemPtr {
             TypeKind::Array(b, _l) => b.clone(),
             _ => all_ty,
         };
+        println!("elem_ty: {:?}", elem_ty);
         writeln!(buf, "  li t2, {}", elem_ty.size()).unwrap();
         writeln!(buf, "  mul t1, t1, t2").unwrap();
         writeln!(buf, "  add t0, t0, t1").unwrap();

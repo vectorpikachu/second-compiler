@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use koopa::ir::{entities::ValueData, Program, Type, Value};
+use koopa::ir::{Program, Type, Value};
 
 use super::function_info::FunctionInfo;
 
