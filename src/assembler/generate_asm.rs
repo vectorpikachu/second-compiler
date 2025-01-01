@@ -1,11 +1,11 @@
 //! 生成 RISCV 的汇编代码
 
 use koopa::ir::entities::ValueData;
-use koopa::ir::values::{Aggregate, Binary, Branch, Call, GetElemPtr, GlobalAlloc, Jump, Load, Return, Store};
+use koopa::ir::values::{Aggregate, Binary, Branch, Call, GetElemPtr, GetPtr, GlobalAlloc, Jump, Load, Return, Store};
 use koopa::ir::{BasicBlock, BinaryOp, Function, FunctionData, Program, Type, TypeKind, Value, ValueKind};
 
 use super::function_info::FunctionInfo;
-use super::program_info::ProgramInfo;
+use super::program_info::{self, ProgramInfo};
 use std::cmp::max;
 use std::io::Write;
 
@@ -138,6 +138,7 @@ pub fn generate_prologue(
     for (value, _) in function_data.dfg().values() {
         let value_data = function_data.dfg().value(*value);
         if let ValueKind::Alloc(_alloc) = value_data.kind() {
+            println!("我事先分配所有的alloc whose value_data: {:?}", value_data);
             let size = match value_data.ty().kind() {
                 TypeKind::Pointer(base) => base.size(),
                 _ => 4,
@@ -145,6 +146,7 @@ pub fn generate_prologue(
             func_info.set_alloc_offset(*value, value_data.ty().kind().clone());
         }
     }
+    println!();
 
     stack_size += alloc_size as i32;
 
@@ -198,6 +200,7 @@ impl GenerateAsm for FunctionData {
             for inst in node.insts().keys() {
                 // Value 也是一个 Handle, 没有办法直接生成
                 let value_data = self.dfg().value(*inst);
+                println!("\n我正在处理 : {:?}", value_data);
                 value_data.generate_asm(buf, program_info);
                 let func_info = program_info.get_current_func_mut().unwrap();
                 // 计算出来的值, 如果被分配了空间就需要存进去
@@ -260,6 +263,7 @@ impl GenerateAsm for Value {
                     }
                     _ => {}
                 }
+                println!("I am here");
                 return RealValue::None;
             } else {
                 return RealValue::DataSeg(option_data.unwrap());
@@ -274,6 +278,7 @@ impl GenerateAsm for Value {
                     .value(*self)
                     .clone()
             };
+            println!("Value_data: {:?}", value_data);
             match value_data.kind() {
                 ValueKind::Integer(num) => {
                     return RealValue::Const(num.value());
@@ -291,17 +296,27 @@ impl GenerateAsm for Value {
                     }
                 }
                 _ => {
+                    println!("在这里");
                     let func_info = program_info.get_current_func_mut().unwrap();
                     let option_alloc = func_info.get_alloc_offset(self);
                     let is_array = func_info.is_alloc_array(self);
 
-                    if option_alloc.is_some() && is_array{
+                    if option_alloc.is_some() && is_array {
+                        println!("I Got a array");
                         return RealValue::Array(option_alloc.unwrap());
                     }
+
                     let offset = func_info.get_current_offset(self);
 
                     // 把类型存入, 如果是get_elem_ptr的话
                     if let ValueKind::GetElemPtr(_) = value_data.kind() {
+                        let now_ty = GLOBAL_NOW_TYPE.load(Ordering::SeqCst);
+                        func_info.insert_type(*self, unsafe { (*now_ty).clone() });
+                        return RealValue::Pointer(offset);
+                    }
+                    // 如果是 get_ptr 也应该存入
+                    if let ValueKind::GetPtr(_) = value_data.kind() {
+                        println!("get_ptr ?????");
                         let now_ty = GLOBAL_NOW_TYPE.load(Ordering::SeqCst);
                         func_info.insert_type(*self, unsafe { (*now_ty).clone() });
                         return RealValue::Pointer(offset);
@@ -363,6 +378,8 @@ impl GenerateAsm for ValueData {
             }
             ValueKind::GetPtr(get_ptr) => {
                 println!("get ptr");
+                let ty = get_ptr.generate_asm(buf, program_info);
+                GLOBAL_NOW_TYPE.store(Box::into_raw(Box::new(ty)), Ordering::SeqCst);
             }
             ValueKind::BlockArgRef(block_arg_ref) => {
                 println!("block arg ref");
@@ -740,17 +757,17 @@ impl GenerateAsm for ValueKind {
             ValueKind::Aggregate(aggregate) => {
                 aggregate.generate_asm(buf, program_info);
             }
-            ValueKind::GetElemPtr(get_elem_ptr) => {
-                println!("get element ptr2");
+            ValueKind::GetElemPtr(_get_elem_ptr) => {
+                // 不会到达这里的
             }
-            ValueKind::GetPtr(get_ptr) => {
-                println!("get ptr");
+            ValueKind::GetPtr(_get_ptr) => {
+                // 不会到达这里的
             }
-            ValueKind::BlockArgRef(block_arg_ref) => {
-                println!("block arg ref");
+            ValueKind::BlockArgRef(_block_arg_ref) => {
+                // 不会到达这里的
             }
-            ValueKind::FuncArgRef(func_arg_ref) => {
-                println!("func arg ref");
+            ValueKind::FuncArgRef(_func_arg_ref) => {
+                // 不会到达这里的
             }
             ValueKind::GlobalAlloc(global_alloc) => {
                 global_alloc.generate_asm(buf, program_info);
@@ -823,8 +840,10 @@ impl GenerateAsm for GetElemPtr {
             }
         };
 
+        // 有可能是一个 GetPtr 得到的 Array
         let elem_ty = match all_ty.kind() {
             TypeKind::Array(b, _l) => b.clone(),
+            TypeKind::Pointer(b) => b.clone(),
             _ => all_ty,
         };
         println!("elem_ty: {:?}", elem_ty);
@@ -833,6 +852,50 @@ impl GenerateAsm for GetElemPtr {
         writeln!(buf, "  add t0, t0, t1").unwrap();
         elem_ty.clone()
     }
+}
+
+
+impl GenerateAsm for GetPtr {
+    type Out = Type;
+
+    /// GetPtr 和 GetElemPtr 在汇编层面做的完全一样的
+    /// GetPtr 不改变 类型
+    /// `arr: *[i32, 10]`, 在GetPtr之后得到 `*[i32, 10]`,
+    /// 接着进行 GetElemPtr 得到的类型就变成了 `i32`
+    fn generate_asm(&self, buf: &mut Vec<u8>, program_info: &mut ProgramInfo) -> Self::Out {
+        let ptr = self.src().generate_asm(buf, program_info);
+        let index = self.index().generate_asm(buf, program_info);
+
+        // 第一步, 计算 @arr 的地址
+        // 这里已经有了, load t0 offset(sp)
+        ptr.calc_arr_addr(buf, program_info, "t0".to_string());
+        // 第二步, 计算 getptr 的偏移量
+        // li t1, index
+        // li t2, size
+        // mul t1, t1, t2
+        // add t0, t0, t1
+        index.load_value(buf, program_info, "t1".to_string());
+        let func_info = program_info.get_current_func().unwrap();
+        let all_ty = program_info.get_program().func(*func_info.get_func()).dfg().value(self.src()).ty();
+        
+
+        println!("all_ty: {:?}", all_ty);
+        let elem_ty = match all_ty.kind() {
+            TypeKind::Array(b, _l) => b.clone(),
+            TypeKind::Pointer(b) => b.clone(),
+            _ => all_ty.clone(),
+        };
+        println!("elem_ty: {:?}", elem_ty);
+        writeln!(buf, "  li t2, {}", elem_ty.size()).unwrap();
+        writeln!(buf, "  mul t1, t1, t2").unwrap();
+        writeln!(buf, "  add t0, t0, t1").unwrap();
+        all_ty.clone()
+    }
+}
+
+pub fn insert_type(program_info: &mut ProgramInfo, value: Value, ty: Type) {
+    let func_info = program_info.get_current_func_mut().unwrap();
+    func_info.insert_type(value, ty.clone());
 }
 
 impl RealValue {
@@ -868,8 +931,9 @@ impl RealValue {
                 load_from_stack(buf, reg.clone(), *offset);
                 reg
             }
-            _ => {
-                panic!("RealValue is None")
+            RealValue::Pointer(offset) => {
+                load_from_stack(buf, reg.clone(), *offset);
+                reg
             }
         }
     }

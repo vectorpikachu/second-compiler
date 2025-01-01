@@ -128,7 +128,7 @@ impl FunctionInfo {
         self.current_offset += size as i32;
     }
 
-    /// 得到 alloc 的大小
+    /// 得到 alloc 的类型
     pub fn get_alloc_type_kind(&self, value: &Value) -> Option<&Type> {
         match self.alloc_offset.get(value) {
             Some(offset) => Some(&offset.1),
@@ -141,6 +141,7 @@ impl FunctionInfo {
     }
 
     pub fn get_type(&self, value: &Value) -> Option<&Type> {
+        println!("{:?}", self.all_types);
         self.all_types.get(value)
     }
 

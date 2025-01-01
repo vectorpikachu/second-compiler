@@ -1,179 +1,147 @@
-  .data
-  .globl ga
-ga:
-  .zero 12
+  .text
+  .globl f1d
+f1d:
+  addi sp, sp, -64
+f1d_0_entry_1:
+  j f1d_0_bb_3
+f1d_0_bb_3:
+  mv t0, a0
+  sw t0, 12(sp)
+  li t0, 0
+  sw t0, 16(sp)
+  j f1d_0_while_entry_6
+f1d_0_while_entry_6:
+  lw t0, 16(sp)
+  sw t0, 20(sp)
+  lw t0, 20(sp)
+  li t1, 10
+  slt t0, t0, t1
+  sw t0, 24(sp)
+  lw t0, 24(sp)
+  beqz t0, f1d_0_while_exit_5
+  j f1d_0_while_body_4
+f1d_0_while_body_4:
+  lw t0, 12(sp)
+  sw t0, 28(sp)
+  lw t0, 16(sp)
+  sw t0, 32(sp)
+  lw t0, 28(sp)
+  lw t1, 32(sp)
+  li t2, 4
+  mul t1, t1, t2
+  add t0, t0, t1
+  sw t0, 36(sp)
+  lw t0, 16(sp)
+  sw t0, 40(sp)
+  lw t0, 40(sp)
+  lw t1, 36(sp)
+  sw t0, 0(t1)
+  lw t0, 16(sp)
+  sw t0, 44(sp)
+  lw t0, 44(sp)
+  li t1, 1
+  add t0, t0, t1
+  sw t0, 48(sp)
+  lw t0, 48(sp)
+  sw t0, 16(sp)
+  j f1d_0_while_entry_6
+f1d_0_while_exit_5:
+  j f1d_0_exit_2
+f1d_0_exit_2:
+  addi sp, sp, 64
+  ret
 
-  .data
-  .globl gb
-gb:
-  .word 5
-  .word 6
-  .word 7
-  .word 8
-  .word 0
-  .word 0
+  .text
+  .globl f2d
+f2d:
+  addi sp, sp, -80
+  sw ra, 76(sp)
+f2d_1_entry_2:
+  j f2d_1_bb_6
+f2d_1_bb_6:
+  mv t0, a0
+  sw t0, 12(sp)
+  lw t0, 12(sp)
+  sw t0, 16(sp)
+  lw t0, 16(sp)
+  li t1, 1
+  li t2, 40
+  mul t1, t1, t2
+  add t0, t0, t1
+  sw t0, 20(sp)
+  lw t0, 20(sp)
+  li t1, 2
+  li t2, 40
+  mul t1, t1, t2
+  add t0, t0, t1
+  sw t0, 24(sp)
+  li t0, 3
+  lw t1, 24(sp)
+  sw t0, 0(t1)
+  li t0, 0
+  sw t0, 28(sp)
+  j f2d_1_while_entry_3
+f2d_1_while_entry_3:
+  lw t0, 28(sp)
+  sw t0, 32(sp)
+  lw t0, 32(sp)
+  li t1, 10
+  slt t0, t0, t1
+  sw t0, 36(sp)
+  lw t0, 36(sp)
+  beqz t0, f2d_1_while_exit_4
+  j f2d_1_while_body_1
+f2d_1_while_body_1:
+  lw t0, 12(sp)
+  sw t0, 40(sp)
+  lw t0, 28(sp)
+  sw t0, 44(sp)
+  lw t0, 40(sp)
+  lw t1, 44(sp)
+  li t2, 40
+  mul t1, t1, t2
+  add t0, t0, t1
+  sw t0, 48(sp)
+  lw t0, 48(sp)
+  li t1, 0
+  li t2, 40
+  mul t1, t1, t2
+  add t0, t0, t1
+  sw t0, 52(sp)
+  lw a0, 52(sp)
+  call f1d
+  lw t0, 28(sp)
+  sw t0, 56(sp)
+  lw t0, 56(sp)
+  li t1, 1
+  add t0, t0, t1
+  sw t0, 60(sp)
+  lw t0, 60(sp)
+  sw t0, 28(sp)
+  j f2d_1_while_entry_3
+f2d_1_while_exit_4:
+  j f2d_1_exit_5
+f2d_1_exit_5:
+  lw ra, 76(sp)
+  addi sp, sp, 80
+  ret
 
   .text
   .globl main
 main:
-  addi sp, sp, -160
-main_0_entry_1:
-  j main_0_bb_4
-main_0_bb_4:
-  addi t0, sp, 4
-  li t1, 0
-  li t2, 12
-  mul t1, t1, t2
-  add t0, t0, t1
-  sw t0, 44(sp)
-  lw t0, 44(sp)
-  li t1, 0
-  li t2, 4
-  mul t1, t1, t2
-  add t0, t0, t1
-  sw t0, 48(sp)
-  li t0, 1
-  lw t1, 48(sp)
-  sw t0, 0(t1)
-  lw t0, 44(sp)
-  li t1, 1
-  li t2, 4
-  mul t1, t1, t2
-  add t0, t0, t1
-  sw t0, 52(sp)
-  li t0, 2
-  lw t1, 52(sp)
-  sw t0, 0(t1)
-  lw t0, 44(sp)
-  li t1, 2
-  li t2, 4
-  mul t1, t1, t2
-  add t0, t0, t1
-  sw t0, 56(sp)
-  li t0, 3
-  lw t1, 56(sp)
-  sw t0, 0(t1)
-  addi t0, sp, 4
-  li t1, 1
-  li t2, 12
-  mul t1, t1, t2
-  add t0, t0, t1
-  sw t0, 60(sp)
-  lw t0, 60(sp)
-  li t1, 0
-  li t2, 4
-  mul t1, t1, t2
-  add t0, t0, t1
-  sw t0, 64(sp)
-  li t0, 4
-  lw t1, 64(sp)
-  sw t0, 0(t1)
-  lw t0, 60(sp)
-  li t1, 1
-  li t2, 4
-  mul t1, t1, t2
-  add t0, t0, t1
-  sw t0, 68(sp)
-  li t0, 0
-  lw t1, 68(sp)
-  sw t0, 0(t1)
-  lw t0, 60(sp)
-  li t1, 2
-  li t2, 4
-  mul t1, t1, t2
-  add t0, t0, t1
-  sw t0, 72(sp)
-  li t0, 0
-  lw t1, 72(sp)
-  sw t0, 0(t1)
-  li t0, 0
-  sw t0, 76(sp)
-  addi t0, sp, 28
-  li t1, 0
-  li t2, 4
-  mul t1, t1, t2
-  add t0, t0, t1
-  sw t0, 80(sp)
-  li t0, 5
-  lw t1, 80(sp)
-  sw t0, 0(t1)
-  addi t0, sp, 4
-  li t1, 1
-  li t2, 12
-  mul t1, t1, t2
-  add t0, t0, t1
-  sw t0, 84(sp)
-  lw t0, 84(sp)
-  li t1, 2
-  li t2, 4
-  mul t1, t1, t2
-  add t0, t0, t1
-  sw t0, 88(sp)
-  addi t0, sp, 28
-  li t1, 0
-  li t2, 4
-  mul t1, t1, t2
-  add t0, t0, t1
-  sw t0, 92(sp)
-  lw t1, 88(sp)
-  lw t0, 0(t1)
-  sw t0, 96(sp)
-  lw t1, 92(sp)
-  lw t0, 0(t1)
-  sw t0, 100(sp)
-  lw t0, 96(sp)
-  lw t1, 100(sp)
-  add t0, t0, t1
-  sw t0, 104(sp)
-  lw t0, 104(sp)
-  sw t0, 76(sp)
-  la t0, ga
-  li t1, 0
-  li t2, 4
-  mul t1, t1, t2
-  add t0, t0, t1
-  sw t0, 108(sp)
-  lw t0, 76(sp)
-  sw t0, 112(sp)
-  lw t1, 108(sp)
-  lw t0, 0(t1)
-  sw t0, 116(sp)
-  lw t0, 112(sp)
-  lw t1, 116(sp)
-  add t0, t0, t1
-  sw t0, 120(sp)
-  la t0, gb
-  li t1, 1
-  li t2, 12
-  mul t1, t1, t2
-  add t0, t0, t1
-  sw t0, 124(sp)
-  lw t0, 124(sp)
-  li t1, 2
-  li t2, 4
-  mul t1, t1, t2
-  add t0, t0, t1
-  sw t0, 128(sp)
-  lw t1, 128(sp)
-  lw t0, 0(t1)
-  sw t0, 132(sp)
-  lw t0, 120(sp)
-  lw t1, 132(sp)
-  add t0, t0, t1
-  sw t0, 136(sp)
-  lw t0, 136(sp)
-  sw t0, 76(sp)
-  lw t0, 76(sp)
-  sw t0, 140(sp)
-  lw t0, 140(sp)
-  sw t0, 144(sp)
-  j main_0_exit_2
-main_0_bb_3:
-  j main_0_exit_2
-main_0_exit_2:
-  lw t0, 144(sp)
-  sw t0, 148(sp)
-  lw a0, 148(sp)
-  addi sp, sp, 160
+  addi sp, sp, -16
+main_2_entry_1:
+  j main_2_bb_4
+main_2_bb_4:
+  li t0, 33
+  sw t0, 4(sp)
+  j main_2_exit_3
+main_2_bb_2:
+  j main_2_exit_3
+main_2_exit_3:
+  lw t0, 4(sp)
+  sw t0, 8(sp)
+  lw a0, 8(sp)
+  addi sp, sp, 16
   ret
 
