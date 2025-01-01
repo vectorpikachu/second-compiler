@@ -19,40 +19,24 @@ static GLOBAL_NOW_TYPE: AtomicPtr<Type> = AtomicPtr::new(std::ptr::null_mut());
 
 /// 把所有的局部变量都放在栈上 + 寄存器上
 
-pub trait GenerateAsm<'b, 'a> {
+pub trait GenerateAsm {
     // 这样就可以返回什么乱写了
     type Out;
-
-    /// 我发现 后期的处理中总是会出现对 program_info 的引用出现两次
-    /// 但是其实我并不想让第一次取出来的那个值活得和 program_info 一样长
-    /// 所以我要指定一个生命周期
-    /// 这里的 'b : 'a
-    fn generate_asm(&self, buf: &mut Vec<u8>, program_info: &'b mut ProgramInfo<'a>) -> Self::Out;
+    fn generate_asm(&self, buf: &mut Vec<u8>, program_info: &mut ProgramInfo) -> Self::Out;
 }
 
-pub trait GenerateAsmWithValue {
-    type Out;
-    fn generate_asm_with_value(
-        &self,
-        buf: &mut Vec<u8>,
-        program_info: &mut ProgramInfo,
-        value: &ValueData,
-    ) -> Self::Out;
+pub trait GenerateOffset {
+    fn generate_offset(&self, program_info: &mut ProgramInfo) -> i32;
 }
 
-impl<'b, 'a> GenerateAsm<'b, 'a> for Program {
+impl GenerateAsm for Program {
     type Out = ();
     // 生成整个程序的汇编代码
-    fn generate_asm(&self, buf: &mut Vec<u8>, program_info: &'b mut ProgramInfo<'a>) {
+    fn generate_asm(&self, buf: &mut Vec<u8>, program_info: &mut ProgramInfo) {
         // 要先处理全局的, 分配在 Data 中的数据
         for value in self.inst_layout() {
             let value_data = self.borrow_value(*value);
-            let name = value_data
-                .name()
-                .as_ref()
-                .unwrap()
-                .strip_prefix("@")
-                .unwrap();
+            let name = value_data.name().as_ref().unwrap().strip_prefix("@").unwrap();
             program_info.insert_value_name(*value, name.to_string());
             writeln!(buf, "  .data").unwrap();
             writeln!(buf, "  .globl {}", name).unwrap();
@@ -60,7 +44,7 @@ impl<'b, 'a> GenerateAsm<'b, 'a> for Program {
             value_data.generate_asm(buf, program_info);
             writeln!(buf).unwrap();
         }
-
+        
         // 我们对于当前的每个函数都生成汇编代码
         for &func in self.func_layout() {
             let func_info = FunctionInfo::new(func);
@@ -74,9 +58,9 @@ impl<'b, 'a> GenerateAsm<'b, 'a> for Program {
     }
 }
 
-impl<'b, 'a> GenerateAsm<'b, 'a> for Function {
+impl GenerateAsm for Function {
     type Out = String;
-    fn generate_asm(&self, _buf: &mut Vec<u8>, program_info: &'b mut ProgramInfo<'a>) -> Self::Out {
+    fn generate_asm(&self, _buf: &mut Vec<u8>, program_info: &mut ProgramInfo) -> Self::Out {
         let name = program_info.get_program().func(*self).name().to_string();
         name.strip_prefix("@").unwrap().to_string()
     }
@@ -101,10 +85,10 @@ pub fn generate_prologue(
     }
 
     /* 函数的返回地址保存在寄存器 ra 中.
-     非叶子函数通常需要在 prologue 中将自己的 ra 寄存器保存到栈帧中.
-     在 epilogue 中, 非叶子函数需要先从栈帧中恢复 ra 寄存器,
-     之后才能执行 ret 指令.
-    */
+      非叶子函数通常需要在 prologue 中将自己的 ra 寄存器保存到栈帧中. 
+      在 epilogue 中, 非叶子函数需要先从栈帧中恢复 ra 寄存器, 
+      之后才能执行 ret 指令. 
+     */
 
     // 一个永远不会调用其他函数的函数被称为叶子函数
 
@@ -177,7 +161,7 @@ pub fn generate_prologue(
         return;
     }
 
-    if stack_size <= 2047 {
+    if stack_size <= 2048 {
         writeln!(buf, "  addi sp, sp, -{}", stack_size).unwrap();
     } else {
         writeln!(buf, "  li t0, -{}", stack_size).unwrap();
@@ -190,12 +174,12 @@ pub fn generate_prologue(
     }
 }
 
-impl<'b, 'a> GenerateAsm<'b, 'a> for FunctionData {
+impl GenerateAsm for FunctionData {
     type Out = ();
-    fn generate_asm(&self, buf: &mut Vec<u8>, program_info: &'b mut ProgramInfo<'a>) {
+    fn generate_asm(&self, buf: &mut Vec<u8>, program_info: &mut ProgramInfo) {
         /*
-         RISC-V 汇编中, 函数符号无需声明即可直接使用.
-         关于到底去哪里找这些外部符号, 这件事情由链接器负责.
+         RISC-V 汇编中, 函数符号无需声明即可直接使用. 
+         关于到底去哪里找这些外部符号, 这件事情由链接器负责. 
          除此之外, 调用库函数和调用 SysY 内定义的函数并无区别.
          Koopa IR 中, 函数声明是一种特殊的函数, 它们和函数定义是放在一起的.
          也就是说, 在上一节的基础上,
@@ -204,13 +188,6 @@ impl<'b, 'a> GenerateAsm<'b, 'a> for FunctionData {
         // 没有进入块, 这就是一个声明了
         if self.layout().entry_bb().is_none() {
             return;
-        }
-
-        for (value, value_data) in self.dfg().values() {
-            if value_data.kind().is_local_inst() && !value_data.used_by().is_empty() {
-                let func_info = program_info.get_current_func_mut().unwrap();
-                func_info.get_current_offset(value, value_data);
-            }
         }
 
         generate_prologue(buf, program_info, self);
@@ -225,17 +202,19 @@ impl<'b, 'a> GenerateAsm<'b, 'a> for FunctionData {
                 let value_data = self.dfg().value(*inst);
                 println!("\n我正在处理 : {:?}", value_data);
                 value_data.generate_asm(buf, program_info);
+                let func_info = program_info.get_current_func_mut().unwrap();
                 // 计算出来的值, 如果被分配了空间就需要存进去
                 // 可能还需要被用到 而且 有值产生
                 // 比如 alloc i32 不用存
                 if !value_data.ty().is_unit() && !value_data.used_by().is_empty() {
                     let flag = match value_data.kind() {
-                        ValueKind::Alloc(_) => false,
+                        ValueKind::Alloc(_) => {
+                            false
+                        }
                         _ => true,
                     };
-                    let func_info = program_info.get_current_func_mut().unwrap();
                     if flag {
-                        let offset = func_info.get_current_offset(inst, value_data);
+                        let offset = func_info.get_current_offset(inst);
                         match value_data.kind() {
                             ValueKind::Call(_) => {
                                 store_to_stack(buf, "a0".to_string(), offset);
@@ -251,22 +230,22 @@ impl<'b, 'a> GenerateAsm<'b, 'a> for FunctionData {
     }
 }
 
-impl<'b, 'a> GenerateAsm<'b, 'a> for BasicBlock {
+impl GenerateAsm for BasicBlock {
     type Out = String;
-    fn generate_asm(&self, _buf: &mut Vec<u8>, program_info: &'b mut ProgramInfo<'a>) -> Self::Out {
+    fn generate_asm(&self, _buf: &mut Vec<u8>, program_info: &mut ProgramInfo) -> Self::Out {
         let func_info = program_info.get_current_func().unwrap();
         let bb_name = func_info.get_bb_name(*self);
         bb_name
     }
 }
 
-impl<'b, 'a> GenerateAsm<'b, 'a> for Value {
+impl GenerateAsm for Value {
     type Out = RealValue;
 
     /// 生成 Value 的汇编代码
     /// 产出是一个 RealValue, 用来表示这个 Value 的位置
     /// 有些地方需要用到之前的 Value , 这就相当于一个指针指向之前的 Value
-    fn generate_asm(&self, buf: &mut Vec<u8>, program_info: &'b mut ProgramInfo<'a>) -> Self::Out {
+    fn generate_asm(&self, buf: &mut Vec<u8>, program_info: &mut ProgramInfo) -> Self::Out {
         // writeln!(buf,"  {}:", inst_name).unwrap();
         if self.is_global() {
             // 全局变量放在 .data 段
@@ -313,9 +292,7 @@ impl<'b, 'a> GenerateAsm<'b, 'a> for Value {
                     } else {
                         let func_info = program_info.get_current_func_mut().unwrap();
                         let stack_size = func_info.get_stack_size();
-                        return RealValue::StackPos(
-                            ((arg_index - 8) * 4 + stack_size).try_into().unwrap(),
-                        );
+                        return RealValue::StackPos(((arg_index - 8) * 4 + stack_size).try_into().unwrap());
                     }
                 }
                 _ => {
@@ -352,10 +329,10 @@ impl<'b, 'a> GenerateAsm<'b, 'a> for Value {
     }
 }
 
-impl<'b, 'a> GenerateAsm<'b, 'a> for ValueData {
+impl GenerateAsm for ValueData {
     type Out = ();
 
-    fn generate_asm(&self, buf: &mut Vec<u8>, program_info: &'b mut ProgramInfo<'a>) {
+    fn generate_asm(&self, buf: &mut Vec<u8>, program_info: &mut ProgramInfo) {
         match self.kind() {
             ValueKind::Return(val) => {
                 val.generate_asm(buf, program_info);
@@ -387,10 +364,11 @@ impl<'b, 'a> GenerateAsm<'b, 'a> for ValueData {
             ValueKind::Call(call) => {
                 call.generate_asm(buf, program_info);
             }
-            ValueKind::ZeroInit(zero_init) => {
-                zero_init.generate_asm_with_value(buf, program_info, self);
+            ValueKind::ZeroInit(_zero_init) => {
+                writeln!(buf, "  .zero {}", self.ty().size()).unwrap();
             }
             ValueKind::Aggregate(aggregate) => {
+                println!("aggregate");
                 aggregate.generate_asm(buf, program_info);
             }
             ValueKind::GetElemPtr(get_elem_ptr) => {
@@ -418,10 +396,10 @@ impl<'b, 'a> GenerateAsm<'b, 'a> for ValueData {
     }
 }
 
-impl<'b, 'a> GenerateAsm<'b, 'a> for Return {
+impl GenerateAsm for Return {
     type Out = ();
 
-    fn generate_asm(&self, buf: &mut Vec<u8>, program_info: &'b mut ProgramInfo<'a>) {
+    fn generate_asm(&self, buf: &mut Vec<u8>, program_info: &mut ProgramInfo) {
         if self.value().is_none() {
             // 没有返回值
             // 直接就返回啦！
@@ -441,7 +419,7 @@ impl<'b, 'a> GenerateAsm<'b, 'a> for Return {
             return;
         }
         let real_val = val.generate_asm(buf, program_info);
-
+        
         match real_val {
             RealValue::Const(num) => {
                 writeln!(buf, "  li a0, {}", num).unwrap();
@@ -488,9 +466,9 @@ pub fn generate_epilogue(buf: &mut Vec<u8>, program_info: &mut ProgramInfo) {
     writeln!(buf, "  ret").unwrap();
 }
 
-impl<'b, 'a> GenerateAsm<'b, 'a> for Load {
+impl GenerateAsm for Load {
     type Out = RealValue;
-    fn generate_asm(&self, buf: &mut Vec<u8>, program_info: &'b mut ProgramInfo<'a>) -> Self::Out {
+    fn generate_asm(&self, buf: &mut Vec<u8>, program_info: &mut ProgramInfo) -> Self::Out {
         let src_val = self.src().generate_asm(buf, program_info);
         let ret = match src_val {
             RealValue::Const(num) => {
@@ -523,19 +501,17 @@ impl<'b, 'a> GenerateAsm<'b, 'a> for Load {
             _ => {
                 panic!("Load src is None")
             }
-            _ => RealValue::None,
         };
         ret
     }
 }
 
-impl<'b, 'a> GenerateAsm<'b, 'a> for Store {
+impl GenerateAsm for Store {
     type Out = ();
 
-    fn generate_asm(&self, buf: &mut Vec<u8>, program_info: &'b mut ProgramInfo<'a>) -> Self::Out {
+    fn generate_asm(&self, buf: &mut Vec<u8>, program_info: &mut ProgramInfo) -> Self::Out {
         let dest_val = self.dest().generate_asm(buf, program_info);
         let src_val = self.value().generate_asm(buf, program_info);
-
         // 先把 src_val 放到 t0 中
         match src_val {
             RealValue::Const(num) => {
@@ -560,7 +536,6 @@ impl<'b, 'a> GenerateAsm<'b, 'a> for Store {
             _ => {
                 panic!("Store src is None")
             }
-            _ => {}
         }
 
         // 再把 t0 放到 dest_val 中
@@ -594,17 +569,17 @@ impl<'b, 'a> GenerateAsm<'b, 'a> for Store {
     }
 }
 
-impl<'b, 'a> GenerateAsm<'b, 'a> for Jump {
+impl GenerateAsm for Jump {
     type Out = ();
-    fn generate_asm(&self, buf: &mut Vec<u8>, program_info: &'b mut ProgramInfo<'a>) -> Self::Out {
+    fn generate_asm(&self, buf: &mut Vec<u8>, program_info: &mut ProgramInfo) -> Self::Out {
         let target = self.target().generate_asm(buf, program_info);
         writeln!(buf, "  j {}", target).unwrap();
     }
 }
 
-impl<'b, 'a> GenerateAsm<'b, 'a> for Branch {
+impl GenerateAsm for Branch {
     type Out = ();
-    fn generate_asm(&self, buf: &mut Vec<u8>, program_info: &'b mut ProgramInfo<'a>) -> Self::Out {
+    fn generate_asm(&self, buf: &mut Vec<u8>, program_info: &mut ProgramInfo) -> Self::Out {
         let cond = self.cond().generate_asm(buf, program_info);
         cond.load_value(buf, program_info, "t0".to_string());
         let tbb = self.true_bb().generate_asm(buf, program_info);
@@ -614,9 +589,9 @@ impl<'b, 'a> GenerateAsm<'b, 'a> for Branch {
     }
 }
 
-impl<'b, 'a> GenerateAsm<'b, 'a> for Binary {
+impl GenerateAsm for Binary {
     type Out = RealValue;
-    fn generate_asm(&self, buf: &mut Vec<u8>, program_info: &'b mut ProgramInfo<'a>) -> Self::Out {
+    fn generate_asm(&self, buf: &mut Vec<u8>, program_info: &mut ProgramInfo) -> Self::Out {
         let lhs = self.lhs().generate_asm(buf, program_info);
         let rhs = self.rhs().generate_asm(buf, program_info);
         let op = self.op();
@@ -695,9 +670,9 @@ impl<'b, 'a> GenerateAsm<'b, 'a> for Binary {
     }
 }
 
-impl<'b, 'a> GenerateAsm<'b, 'a> for Call {
+impl GenerateAsm for Call {
     type Out = RealValue;
-    fn generate_asm(&self, buf: &mut Vec<u8>, program_info: &'b mut ProgramInfo<'a>) -> Self::Out {
+    fn generate_asm(&self, buf: &mut Vec<u8>, program_info: &mut ProgramInfo) -> Self::Out {
         // 存放参数
         let args = self.args();
         let mut arg_count = 0;
@@ -720,17 +695,25 @@ impl<'b, 'a> GenerateAsm<'b, 'a> for Call {
     }
 }
 
-impl<'b, 'a> GenerateAsm<'b, 'a> for GlobalAlloc {
+
+impl GenerateAsm for GlobalAlloc {
     type Out = ();
-    fn generate_asm(&self, buf: &mut Vec<u8>, program_info: &'b mut ProgramInfo<'a>) -> Self::Out {
-        program_info
-            .get_program()
-            .borrow_value(self.init())
-            .generate_asm(buf, program_info);
-    }
+    fn generate_asm(&self, buf: &mut Vec<u8>, program_info: &mut ProgramInfo) -> Self::Out {
+            let kind = program_info.get_program().borrow_value(self.init()).kind().clone();
+            
+            // ? 这样做是为了避免引用不可变的引用.
+            kind.generate_asm(buf, program_info);
+            match kind {
+                ValueKind::ZeroInit(_) => {
+                    let size = program_info.get_program().borrow_value(self.init()).ty().size();
+                    writeln!(buf, "  .zero {}", size).unwrap();
+                }
+                _ => {}
+            }
+        }
 }
 
-impl<'b, 'a> GenerateAsm<'b, 'a> for Aggregate {
+impl GenerateAsm for ValueKind {
     type Out = ();
 
 
@@ -791,15 +774,11 @@ impl<'b, 'a> GenerateAsm<'b, 'a> for Aggregate {
                 println!("global alloc");
             }
             _ => unimplemented!(),
-        };
-        writeln!(buf, "  li t2, {}", elem_size).unwrap();
-        writeln!(buf, "  mul t1, t1, t2").unwrap();
-        writeln!(buf, "  add t0, t0, t1").unwrap();
-        RealValue::Reg("t0".to_string())
+        }
     }
 }
 
-impl GenerateAsmWithValue for ZeroInit {
+impl GenerateAsm for Aggregate {
     type Out = ();
 
     fn generate_asm(&self, buf: &mut Vec<u8>, program_info: &mut ProgramInfo) -> Self::Out {
@@ -943,16 +922,6 @@ impl RealValue {
                 writeln!(buf, "  la t0, {}", name).unwrap();
                 writeln!(buf, "  lw {}, 0(t0)", reg).unwrap();
                 reg
-            }
-            RealValue::Pointer(offset) => {
-                if *offset <= 2047 && *offset >= -2048 {
-                    writeln!(buf, "  addi {}, sp, {}", reg, *offset).unwrap();
-                    reg
-                } else {
-                    writeln!(buf, "  li t0, {}", *offset).unwrap();
-                    writeln!(buf, "  add {}, sp, t0", reg).unwrap();
-                    reg
-                }
             }
             RealValue::None => {
                 panic!("RealValue is None")
