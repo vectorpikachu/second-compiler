@@ -25,7 +25,15 @@ fn main() -> Result<()> {
     let input = read_to_string(input)?;
 
     // 调用 lalrpop 生成的 parser 解析输入文件
-    let ast = sysy::CompUnitParser::new().parse(&input).unwrap();
+    let ast = sysy::CompUnitParser::new().parse(&input);
+    let ast = match ast {
+        Ok(result) => { result },
+        Err(e) => {
+            println!("Error: {:?}", e);
+            panic!("Parse error.");
+        }
+    };
+    
 
     let program = generate_program(&ast).unwrap();
 

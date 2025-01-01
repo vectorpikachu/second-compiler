@@ -5,7 +5,7 @@ use koopa::ir::values::{Aggregate, Binary, Branch, Call, GetElemPtr, GetPtr, Glo
 use koopa::ir::{BasicBlock, BinaryOp, Function, FunctionData, Program, Type, TypeKind, Value, ValueKind};
 
 use super::function_info::FunctionInfo;
-use super::program_info::{self, ProgramInfo};
+use super::program_info::ProgramInfo;
 use std::cmp::max;
 use std::io::Write;
 
@@ -25,9 +25,6 @@ pub trait GenerateAsm {
     fn generate_asm(&self, buf: &mut Vec<u8>, program_info: &mut ProgramInfo) -> Self::Out;
 }
 
-pub trait GenerateOffset {
-    fn generate_offset(&self, program_info: &mut ProgramInfo) -> i32;
-}
 
 impl GenerateAsm for Program {
     type Out = ();
@@ -138,15 +135,13 @@ pub fn generate_prologue(
     for (value, _) in function_data.dfg().values() {
         let value_data = function_data.dfg().value(*value);
         if let ValueKind::Alloc(_alloc) = value_data.kind() {
-            println!("我事先分配所有的alloc whose value_data: {:?}", value_data);
-            let size = match value_data.ty().kind() {
+            let _size = match value_data.ty().kind() {
                 TypeKind::Pointer(base) => base.size(),
                 _ => 4,
             };
             func_info.set_alloc_offset(*value, value_data.ty().kind().clone());
         }
     }
-    println!();
 
     stack_size += alloc_size as i32;
 
@@ -200,7 +195,6 @@ impl GenerateAsm for FunctionData {
             for inst in node.insts().keys() {
                 // Value 也是一个 Handle, 没有办法直接生成
                 let value_data = self.dfg().value(*inst);
-                println!("\n我正在处理 : {:?}", value_data);
                 value_data.generate_asm(buf, program_info);
                 let func_info = program_info.get_current_func_mut().unwrap();
                 // 计算出来的值, 如果被分配了空间就需要存进去
@@ -263,7 +257,6 @@ impl GenerateAsm for Value {
                     }
                     _ => {}
                 }
-                println!("I am here");
                 return RealValue::None;
             } else {
                 return RealValue::DataSeg(option_data.unwrap());
@@ -278,7 +271,6 @@ impl GenerateAsm for Value {
                     .value(*self)
                     .clone()
             };
-            println!("Value_data: {:?}", value_data);
             match value_data.kind() {
                 ValueKind::Integer(num) => {
                     return RealValue::Const(num.value());
@@ -296,13 +288,11 @@ impl GenerateAsm for Value {
                     }
                 }
                 _ => {
-                    println!("在这里");
                     let func_info = program_info.get_current_func_mut().unwrap();
                     let option_alloc = func_info.get_alloc_offset(self);
                     let is_array = func_info.is_alloc_array(self);
 
                     if option_alloc.is_some() && is_array {
-                        println!("I Got a array");
                         return RealValue::Array(option_alloc.unwrap());
                     }
 
@@ -316,7 +306,6 @@ impl GenerateAsm for Value {
                     }
                     // 如果是 get_ptr 也应该存入
                     if let ValueKind::GetPtr(_) = value_data.kind() {
-                        println!("get_ptr ?????");
                         let now_ty = GLOBAL_NOW_TYPE.load(Ordering::SeqCst);
                         func_info.insert_type(*self, unsafe { (*now_ty).clone() });
                         return RealValue::Pointer(offset);
@@ -368,28 +357,18 @@ impl GenerateAsm for ValueData {
                 writeln!(buf, "  .zero {}", self.ty().size()).unwrap();
             }
             ValueKind::Aggregate(aggregate) => {
-                println!("aggregate");
                 aggregate.generate_asm(buf, program_info);
             }
             ValueKind::GetElemPtr(get_elem_ptr) => {
-                println!("get element ptr1");
                 let ty = get_elem_ptr.generate_asm(buf, program_info);
                 GLOBAL_NOW_TYPE.store(Box::into_raw(Box::new(ty)), Ordering::SeqCst);
             }
             ValueKind::GetPtr(get_ptr) => {
-                println!("get ptr");
                 let ty = get_ptr.generate_asm(buf, program_info);
                 GLOBAL_NOW_TYPE.store(Box::into_raw(Box::new(ty)), Ordering::SeqCst);
             }
-            ValueKind::BlockArgRef(block_arg_ref) => {
-                println!("block arg ref");
-            }
-            ValueKind::FuncArgRef(func_arg_ref) => {
-                println!("func arg ref");
-            }
             ValueKind::GlobalAlloc(global_alloc) => {
                 global_alloc.generate_asm(buf, program_info);
-                println!("global alloc");
             }
             _ => unimplemented!(),
         }
@@ -771,7 +750,6 @@ impl GenerateAsm for ValueKind {
             }
             ValueKind::GlobalAlloc(global_alloc) => {
                 global_alloc.generate_asm(buf, program_info);
-                println!("global alloc");
             }
             _ => unimplemented!(),
         }
@@ -825,14 +803,13 @@ impl GenerateAsm for GetElemPtr {
             RealValue::Pointer(_) => {
                 func_info.get_type(&self.src()).unwrap().clone()
             }
-            RealValue::DataSeg(n) => {
+            RealValue::DataSeg(_n) => {
                 let ty = program_info.get_value_type(self.src());
                 // 得到还是一个指针必须扒皮
                 let ty = match ty.kind() {
                     TypeKind::Pointer(b) => b.clone(),
                     _ => ty,
                 };
-                println!("name: {}, type: {:?}", n, ty);
                 ty.clone()
             }
             _ => {
@@ -846,7 +823,6 @@ impl GenerateAsm for GetElemPtr {
             TypeKind::Pointer(b) => b.clone(),
             _ => all_ty,
         };
-        println!("elem_ty: {:?}", elem_ty);
         writeln!(buf, "  li t2, {}", elem_ty.size()).unwrap();
         writeln!(buf, "  mul t1, t1, t2").unwrap();
         writeln!(buf, "  add t0, t0, t1").unwrap();
@@ -879,23 +855,16 @@ impl GenerateAsm for GetPtr {
         let all_ty = program_info.get_program().func(*func_info.get_func()).dfg().value(self.src()).ty();
         
 
-        println!("all_ty: {:?}", all_ty);
         let elem_ty = match all_ty.kind() {
             TypeKind::Array(b, _l) => b.clone(),
             TypeKind::Pointer(b) => b.clone(),
             _ => all_ty.clone(),
         };
-        println!("elem_ty: {:?}", elem_ty);
         writeln!(buf, "  li t2, {}", elem_ty.size()).unwrap();
         writeln!(buf, "  mul t1, t1, t2").unwrap();
         writeln!(buf, "  add t0, t0, t1").unwrap();
         all_ty.clone()
     }
-}
-
-pub fn insert_type(program_info: &mut ProgramInfo, value: Value, ty: Type) {
-    let func_info = program_info.get_current_func_mut().unwrap();
-    func_info.insert_type(value, ty.clone());
 }
 
 impl RealValue {
@@ -927,7 +896,6 @@ impl RealValue {
                 panic!("RealValue is None")
             }
             RealValue::Array(offset) => {
-                println!("Array offset: {}", offset);
                 load_from_stack(buf, reg.clone(), *offset);
                 reg
             }

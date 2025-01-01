@@ -23,7 +23,6 @@ pub struct FunctionInfo {
     alloc_offset: HashMap<Value, (i32, Type)>,
     current_offset: i32,
     all_types: HashMap<Value, Type>, // 存放需要的数组类型
-    real_value: HashMap<Value, RealValue>,
 }
 
 impl FunctionInfo {
@@ -38,7 +37,6 @@ impl FunctionInfo {
             alloc_offset: HashMap::new(),
             current_offset: 0,
             all_types: HashMap::new(),
-            real_value: HashMap::new(),
         }
     }
 
@@ -81,13 +79,6 @@ impl FunctionInfo {
                 self.current_offset += 4;
                 self.current_offset - 4
             }
-        }
-    }
-
-    pub fn get_inst_offset(&self, value: &Value) -> Option<i32> {
-        match self.inst_offset.get(value) {
-            Some(offset) => Some(*offset),
-            None => None
         }
     }
 
@@ -141,7 +132,6 @@ impl FunctionInfo {
     }
 
     pub fn get_type(&self, value: &Value) -> Option<&Type> {
-        println!("{:?}", self.all_types);
         self.all_types.get(value)
     }
 
@@ -151,17 +141,6 @@ impl FunctionInfo {
 
     pub fn get_call_flag(&self) -> bool {
         self.call_flag
-    }
-
-    pub fn get_real_value(&self, value: &Value) -> RealValue {
-        match self.real_value.get(value) {
-            Some(real_value) => real_value.clone(),
-            None => RealValue::None,
-        }
-    }
-
-    pub fn set_real_value(&mut self, value: Value, real_value: RealValue) {
-        self.real_value.insert(value, real_value);
     }
 
 }

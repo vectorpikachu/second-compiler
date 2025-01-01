@@ -300,7 +300,13 @@ impl FuncDef {
         function_info.push_block(program, entry_block); // 更新 Layout
         if let Some(ret_inst) = function_info.get_return_value() {
             // 这是一个有返回值的函数
+            // 那么势必要先把 0 存储进入
+            let zero = function_info.new_value(program).integer(0);
+            let zero_ret = function_info
+                .new_value(program)
+                .store(zero, ret_inst);
             function_info.push_inst(program, ret_inst);
+            function_info.push_inst(program, zero_ret);  
         }
         // 所有的entry都会跳入这个当前的块中, 它因为没有名字
         // 所以会和entry相连接
@@ -486,6 +492,14 @@ pub fn return_generate_program<'a>(
         }
         None => {
             // 这是一个没有返回值的函数
+            // 但是如果声明要求返回值, 那么返回一个0
+            let func_info = scopes.get_current_func_mut().unwrap();
+            if func_info.get_return_value().is_some() {
+                let retval = func_info.get_return_value().unwrap();
+                let zero = func_info.new_value(program).integer(0);
+                let ret_inst = func_info.new_value(program).store(zero, retval);
+                func_info.push_inst(program, ret_inst);
+            }
         }
     }
     let func_info = scopes.get_current_func_mut().unwrap();
